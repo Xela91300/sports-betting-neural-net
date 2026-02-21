@@ -1,8 +1,5 @@
-# Versions testées et stables pour Streamlit Cloud + TF + Keras en 2025/2026
-streamlit>=1.30.0,<1.41.0          # Évite les versions trop récentes qui cassent parfois
-tensorflow==2.15.0                 # Ou 2.16.1 si tu préfères – évite 2.17+ si problèmes numpy
-tensorflow-cpu==2.15.0             # Force CPU-only → plus fiable sur Cloud (pas de GPU)
-numpy==1.26.4                      # Compatible avec TF 2.15/2.16
-pandas>=2.0,<2.3
-scikit-learn>=1.3,<1.6
-pyyaml>=6.0
+tensorflow==2.12.0
+tensorflow-cpu==2.12.0
+numpy==1.23.5
+protobuf==3.19.6
+streamlit==1.29.0
