@@ -148,61 +148,73 @@ def load_all_tennis_data():
     return combined
 
 # ────────────────────────────────────────────────
-# Stats moyennes d'un joueur sur ses N derniers matchs
+# Stats joueur filtrées par surface
 # ────────────────────────────────────────────────
-def get_player_stats(df, player_name, n_matches=10):
+def get_player_stats(df, player_name, n_matches=10, surface=None):
+    """Stats moyennes d'un joueur sur ses N derniers matchs, filtrées par surface si précisé."""
+
     as_winner = df[df["winner_name"] == player_name].copy()
     as_winner["is_winner"] = True
-    as_winner["ace"]     = as_winner["w_ace"]
-    as_winner["df_col"]  = as_winner["w_df"]
-    as_winner["1stIn"]   = as_winner["w_1stIn"]
-    as_winner["1stWon"]  = as_winner["w_1stWon"]
-    as_winner["bpSaved"] = as_winner["w_bpSaved"]
-    as_winner["bpFaced"] = as_winner["w_bpFaced"]
-    as_winner["rank"]    = as_winner["winner_rank"]
-    as_winner["rank_pts"]= as_winner["winner_rank_points"]
-    as_winner["age"]     = as_winner["winner_age"]
+    as_winner["ace"]      = as_winner["w_ace"]
+    as_winner["df_col"]   = as_winner["w_df"]
+    as_winner["1stIn"]    = as_winner["w_1stIn"]
+    as_winner["1stWon"]   = as_winner["w_1stWon"]
+    as_winner["bpSaved"]  = as_winner["w_bpSaved"]
+    as_winner["bpFaced"]  = as_winner["w_bpFaced"]
+    as_winner["rank"]     = as_winner["winner_rank"]
+    as_winner["rank_pts"] = as_winner["winner_rank_points"]
+    as_winner["age"]      = as_winner["winner_age"]
 
     as_loser = df[df["loser_name"] == player_name].copy()
     as_loser["is_winner"] = False
-    as_loser["ace"]     = as_loser["l_ace"]
-    as_loser["df_col"]  = as_loser["l_df"]
-    as_loser["1stIn"]   = as_loser["l_1stIn"]
-    as_loser["1stWon"]  = as_loser["l_1stWon"]
-    as_loser["bpSaved"] = as_loser["l_bpSaved"]
-    as_loser["bpFaced"] = as_loser["l_bpFaced"]
-    as_loser["rank"]    = as_loser["loser_rank"]
-    as_loser["rank_pts"]= as_loser["loser_rank_points"]
-    as_loser["age"]     = as_loser["loser_age"]
+    as_loser["ace"]      = as_loser["l_ace"]
+    as_loser["df_col"]   = as_loser["l_df"]
+    as_loser["1stIn"]    = as_loser["l_1stIn"]
+    as_loser["1stWon"]   = as_loser["l_1stWon"]
+    as_loser["bpSaved"]  = as_loser["l_bpSaved"]
+    as_loser["bpFaced"]  = as_loser["l_bpFaced"]
+    as_loser["rank"]     = as_loser["loser_rank"]
+    as_loser["rank_pts"] = as_loser["loser_rank_points"]
+    as_loser["age"]      = as_loser["loser_age"]
 
-    cols = ["tourney_date", "tourney_name", "is_winner",
+    cols = ["tourney_date", "tourney_name", "surface", "is_winner",
             "ace", "df_col", "1stIn", "1stWon",
             "bpSaved", "bpFaced", "rank", "rank_pts", "age"]
 
     all_matches = pd.concat(
         [as_winner[cols], as_loser[cols]], ignore_index=True
-    ).sort_values("tourney_date", ascending=False).head(n_matches)
+    ).sort_values("tourney_date", ascending=False)
 
-    if all_matches.empty:
+    # ── Filtrage par surface ──────────────────────
+    all_matches_global  = all_matches.head(n_matches)           # tous matchs
+    all_matches_surface = all_matches[
+        all_matches["surface"] == surface
+    ].head(n_matches) if surface else all_matches_global        # filtrés surface
+
+    # Si pas assez de matchs sur cette surface, fallback sur global
+    working = all_matches_surface if len(all_matches_surface) >= 3 else all_matches_global
+    surface_note = "sur cette surface" if len(all_matches_surface) >= 3 else "toutes surfaces (manque de données)"
+
+    if working.empty:
         return None
 
-    rank     = all_matches["rank"].dropna().iloc[0]     if not all_matches["rank"].dropna().empty     else None
-    rank_pts = all_matches["rank_pts"].dropna().iloc[0] if not all_matches["rank_pts"].dropna().empty else None
-    age      = all_matches["age"].dropna().iloc[0]      if not all_matches["age"].dropna().empty      else None
+    rank     = all_matches_global["rank"].dropna().iloc[0]     if not all_matches_global["rank"].dropna().empty     else None
+    rank_pts = all_matches_global["rank_pts"].dropna().iloc[0] if not all_matches_global["rank_pts"].dropna().empty else None
+    age      = all_matches_global["age"].dropna().iloc[0]      if not all_matches_global["age"].dropna().empty      else None
 
-    ace_avg = all_matches["ace"].mean()
-    df_avg  = all_matches["df_col"].mean()
+    ace_avg = working["ace"].mean()
+    df_avg  = working["df_col"].mean()
 
-    total_1stIn  = all_matches["1stIn"].sum()
-    total_1stWon = all_matches["1stWon"].sum()
+    total_1stIn  = working["1stIn"].sum()
+    total_1stWon = working["1stWon"].sum()
     pct_1st = (total_1stWon / total_1stIn) if total_1stIn > 0 else None
 
-    total_bpFaced = all_matches["bpFaced"].sum()
-    total_bpSaved = all_matches["bpSaved"].sum()
+    total_bpFaced = working["bpFaced"].sum()
+    total_bpSaved = working["bpSaved"].sum()
     pct_bp = (total_bpSaved / total_bpFaced) if total_bpFaced > 0 else None
 
-    wins   = int(all_matches["is_winner"].sum())
-    played = len(all_matches)
+    wins   = int(working["is_winner"].sum())
+    played = len(working)
 
     return {
         "rank": rank, "rank_pts": rank_pts, "age": age,
@@ -210,7 +222,82 @@ def get_player_stats(df, player_name, n_matches=10):
         "pct_1st": pct_1st, "pct_bp": pct_bp,
         "wins": wins, "played": played,
         "win_pct": wins / played if played > 0 else 0,
+        "surface_note": surface_note,
+        "n_surface_matches": len(all_matches_surface),
     }
+
+# ────────────────────────────────────────────────
+# Historique H2H
+# ────────────────────────────────────────────────
+def get_h2h(df, joueur1, joueur2, surface=None):
+    """Retourne l'historique des confrontations directes entre deux joueurs."""
+    mask = (
+        ((df["winner_name"] == joueur1) & (df["loser_name"] == joueur2)) |
+        ((df["winner_name"] == joueur2) & (df["loser_name"] == joueur1))
+    )
+    h2h = df[mask].copy()
+
+    if surface:
+        h2h_surface = h2h[h2h["surface"] == surface]
+    else:
+        h2h_surface = h2h
+
+    h2h_sorted = h2h.sort_values("tourney_date", ascending=False)
+
+    j1_wins_total   = (h2h["winner_name"] == joueur1).sum()
+    j2_wins_total   = (h2h["winner_name"] == joueur2).sum()
+    j1_wins_surface = (h2h_surface["winner_name"] == joueur1).sum() if surface else None
+    j2_wins_surface = (h2h_surface["winner_name"] == joueur2).sum() if surface else None
+
+    recent = h2h_sorted.head(5)[
+        ["tourney_date", "tourney_name", "surface", "round", "winner_name", "loser_name", "score"]
+    ].copy()
+    recent["tourney_date"] = recent["tourney_date"].dt.strftime("%Y-%m-%d")
+
+    return {
+        "total":            len(h2h),
+        "j1_wins_total":    int(j1_wins_total),
+        "j2_wins_total":    int(j2_wins_total),
+        "j1_wins_surface":  int(j1_wins_surface) if j1_wins_surface is not None else None,
+        "j2_wins_surface":  int(j2_wins_surface) if j2_wins_surface is not None else None,
+        "surface_matches":  len(h2h_surface),
+        "recent":           recent,
+    }
+
+# ────────────────────────────────────────────────
+# Score de confiance
+# ────────────────────────────────────────────────
+def confidence_score(proba, stats1, stats2, h2h):
+    """
+    Score de confiance 0-100 basé sur :
+    - Force de la prédiction (distance à 0.5)
+    - Quantité de données disponibles
+    - Cohérence avec l'historique H2H
+    """
+    signals = []
+
+    # 1. Force de la prédiction (0-40 pts)
+    pred_strength = abs(proba - 0.5) * 2   # 0 à 1
+    signals.append(("Force prédiction",  pred_strength * 40))
+
+    # 2. Données suffisantes (0-30 pts)
+    data_quality = min(stats1["played"], 15) / 15 * 0.5 + min(stats2["played"], 15) / 15 * 0.5
+    signals.append(("Qualité des données", data_quality * 30))
+
+    # 3. Cohérence H2H (0-30 pts)
+    h2h_score = 0
+    if h2h["total"] >= 2:
+        favori_proba = joueur1 if proba >= 0.5 else joueur2
+        j1_h2h_pct = h2h["j1_wins_total"] / h2h["total"] if h2h["total"] > 0 else 0.5
+        h2h_favori_pct = j1_h2h_pct if proba >= 0.5 else (1 - j1_h2h_pct)
+        # Plus le H2H confirme la prédiction, plus le score est élevé
+        h2h_score = h2h_favori_pct * 30
+    else:
+        h2h_score = 15  # pas assez de H2H → score neutre
+    signals.append(("Cohérence H2H", h2h_score))
+
+    total = sum(v for _, v in signals)
+    return round(total), signals
 
 # ────────────────────────────────────────────────
 # Interface principale
@@ -251,7 +338,7 @@ if sport:
         if not model:
             st.warning(f"Modèle {sport} introuvable → {cfg['model_path']}")
 
-        # ── Tennis : sélection joueurs + tournoi ──
+        # ── Tennis ───────────────────────────────
         elif sport == "Tennis":
             df_all = load_all_tennis_data()
 
@@ -288,12 +375,13 @@ if sport:
 
                 n_matches = st.slider("Matchs récents à analyser", 5, 30, 10)
 
-                stats1 = get_player_stats(df_all, joueur1, n_matches)
-                stats2 = get_player_stats(df_all, joueur2, n_matches)
+                # Calcul stats (filtrées par surface)
+                stats1 = get_player_stats(df_all, joueur1, n_matches, surface)
+                stats2 = get_player_stats(df_all, joueur2, n_matches, surface)
+                h2h    = get_h2h(df_all, joueur1, joueur2, surface)
 
-                # Tableau des stats
-                st.markdown("### 📊 Stats récentes")
-                cs1, cs2 = st.columns(2)
+                # ── Stats côte à côte ─────────────
+                st.markdown("### 📊 Stats récentes sur " + surface)
 
                 def show_stats(col, name, s):
                     with col:
@@ -301,18 +389,46 @@ if sport:
                         if s is None:
                             st.warning("Aucune donnée disponible")
                             return
-                        st.metric("Classement ATP", f"#{int(s['rank'])}" if s['rank'] else "N/A")
-                        st.metric("Points ATP",     f"{int(s['rank_pts'])}" if s['rank_pts'] else "N/A")
-                        st.metric("Âge",            f"{s['age']:.1f} ans" if s['age'] else "N/A")
-                        st.metric("Victoires récentes", f"{s['wins']}/{s['played']} ({s['win_pct']:.0%})")
-                        st.metric("Aces / match",   f"{s['ace_avg']:.1f}" if pd.notna(s['ace_avg']) else "N/A")
-                        st.metric("DF / match",     f"{s['df_avg']:.1f}"  if pd.notna(s['df_avg'])  else "N/A")
-                        st.metric("% 1ère balle",   f"{s['pct_1st']:.1%}" if s['pct_1st'] else "N/A")
-                        st.metric("% BP sauvées",   f"{s['pct_bp']:.1%}"  if s['pct_bp']  else "N/A")
+                        st.caption(f"📌 Stats calculées {s['surface_note']} ({s['played']} matchs)")
+                        st.metric("Classement ATP", f"#{int(s['rank'])}"     if s['rank']     else "N/A")
+                        st.metric("Points ATP",     f"{int(s['rank_pts'])}"  if s['rank_pts'] else "N/A")
+                        st.metric("Âge",            f"{s['age']:.1f} ans"   if s['age']      else "N/A")
+                        st.metric("Victoires",      f"{s['wins']}/{s['played']} ({s['win_pct']:.0%})")
+                        st.metric("Aces / match",   f"{s['ace_avg']:.1f}"   if pd.notna(s['ace_avg']) else "N/A")
+                        st.metric("DF / match",     f"{s['df_avg']:.1f}"    if pd.notna(s['df_avg'])  else "N/A")
+                        st.metric("% 1ère balle",   f"{s['pct_1st']:.1%}"   if s['pct_1st']  else "N/A")
+                        st.metric("% BP sauvées",   f"{s['pct_bp']:.1%}"    if s['pct_bp']   else "N/A")
 
+                cs1, cs2 = st.columns(2)
                 show_stats(cs1, joueur1, stats1)
                 show_stats(cs2, joueur2, stats2)
 
+                # ── H2H ──────────────────────────
+                st.markdown("### ⚔️ Historique H2H")
+                if h2h["total"] == 0:
+                    st.info("Aucune confrontation directe dans les données disponibles.")
+                else:
+                    ch1, ch2, ch3 = st.columns(3)
+                    ch1.metric("Total confrontations", h2h["total"])
+                    ch2.metric(f"Victoires {joueur1}", h2h["j1_wins_total"])
+                    ch3.metric(f"Victoires {joueur2}", h2h["j2_wins_total"])
+
+                    if h2h["surface_matches"] > 0 and h2h["j1_wins_surface"] is not None:
+                        st.caption(f"Sur {surface} : {joueur1} {h2h['j1_wins_surface']}–{h2h['j2_wins_surface']} {joueur2} ({h2h['surface_matches']} matchs)")
+
+                    if not h2h["recent"].empty:
+                        with st.expander("📋 5 dernières confrontations"):
+                            st.dataframe(
+                                h2h["recent"].rename(columns={
+                                    "tourney_date": "Date", "tourney_name": "Tournoi",
+                                    "surface": "Surface", "round": "Tour",
+                                    "winner_name": "Vainqueur", "loser_name": "Perdant",
+                                    "score": "Score"
+                                }),
+                                use_container_width=True, hide_index=True
+                            )
+
+                # ── Prédiction ────────────────────
                 st.markdown("---")
                 if st.button("🔮 Prédire le vainqueur", type="primary"):
                     if stats1 is None or stats2 is None:
@@ -344,6 +460,7 @@ if sport:
                         with st.spinner("Prédiction en cours..."):
                             proba = float(model.predict(X, verbose=0)[0][0])
 
+                        # ── Résultat ──────────────
                         st.markdown("## 🏆 Résultat")
                         cr1, cr2 = st.columns(2)
                         with cr1:
@@ -360,16 +477,48 @@ if sport:
                         else:
                             st.info("⚖️ Match très serré — faible confiance du modèle")
 
-                        with st.expander("🔍 Détail des valeurs utilisées"):
+                        # ── Score de confiance ────
+                        st.markdown("### 🎯 Score de confiance")
+                        conf_score, signals = confidence_score(proba, stats1, stats2, h2h)
+
+                        # Couleur selon le score
+                        if conf_score >= 70:
+                            conf_color = "🟢"
+                            conf_label = "Confiance élevée"
+                        elif conf_score >= 45:
+                            conf_color = "🟡"
+                            conf_label = "Confiance modérée"
+                        else:
+                            conf_color = "🔴"
+                            conf_label = "Confiance faible"
+
+                        st.metric(
+                            f"{conf_color} {conf_label}",
+                            f"{conf_score} / 100"
+                        )
+                        st.progress(conf_score / 100)
+
+                        with st.expander("🔍 Détail du score de confiance"):
+                            for label, val in signals:
+                                max_val = 40 if "prédiction" in label.lower() else 30
+                                st.write(f"**{label}** : {val:.1f} / {max_val}")
+                                st.progress(val / max_val)
+                            st.caption(
+                                "Force prédiction (40 pts) : distance de la probabilité à 50%\n\n"
+                                "Qualité des données (30 pts) : nombre de matchs analysés\n\n"
+                                "Cohérence H2H (30 pts) : l'historique confirme-t-il la prédiction ?"
+                            )
+
+                        with st.expander("🔬 Valeurs utilisées pour la prédiction"):
                             st.dataframe(pd.DataFrame({
                                 "Feature": ["rank_diff", "pts_diff", "age_diff",
                                             "surface_hard", "surface_clay", "surface_grass",
                                             "best_of", "ace_diff", "df_diff",
                                             "1st_pct_diff", "bp_pct_diff"],
                                 "Valeur": feature_vector
-                            }))
+                            }), hide_index=True)
 
-        # ── Football / Basketball : saisie manuelle ──
+        # ── Football / Basketball ─────────────────
         else:
             st.success(f"✅ Modèle chargé ({len(cfg['features'])} features)")
             st.info(f"Objectif : {cfg['desc']}")
@@ -383,7 +532,6 @@ if sport:
                         user_values[feat] = st.number_input(label, 1.01, 50.0, 2.0, 0.1)
                     else:
                         user_values[feat] = st.number_input(label, -100.0, 100.0, 0.0, 0.1)
-
             if st.button("🔮 Prédire", type="primary"):
                 try:
                     X = np.array([user_values.get(f, 0.0) for f in cfg["features"]]).reshape(1, -1)
