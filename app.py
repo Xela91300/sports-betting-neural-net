@@ -211,8 +211,8 @@ with col1:
 if sport:
     sport_info = SPORT_CONFIG[sport]
     
-    # Onglets pour différentes fonctionnalités
-    tab1, tab2, tab3 = st.tabs(["📊 Prédiction", 📂 "Données", "ℹ️ Stats"])
+    # Onglets pour différentes fonctionnalités - CORRIGÉ ICI
+    tab1, tab2, tab3 = st.tabs(["📊 Prédiction", "📂 Données", "ℹ️ Stats"])
     
     with tab1:
         # Interface de prédiction
