@@ -47,9 +47,10 @@ SPORT_CONFIG = {
         "model_path": MODELS_DIR / "tennis_model.h5",
         "scaler_path": MODELS_DIR / "tennis_scaler.joblib",
         "features": config.get("tennis", {}).get("features", [
-            "rank_diff", "surface_hard", "surface_clay", "surface_grass",
-            "form_10_p1", "form_10_p2", "h2h_p1_wins", "fatigue_p1"
-        ]),
+    "rank_diff", "pts_diff", "age_diff",
+    "surface_hard", "surface_clay", "surface_grass",
+    "best_of", "ace_diff", "df_diff", "1st_pct_diff", "bp_pct_diff"
+]),
         "desc": "Victoire du joueur 1",
         "type": "classification",
         "data_pattern": "*tennis*.csv"
