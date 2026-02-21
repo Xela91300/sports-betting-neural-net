@@ -1,0 +1,42 @@
+{
+  "features": [
+    "rank_diff",
+    "pts_diff",
+    "age_diff",
+    "form_diff",
+    "fatigue_diff",
+    "ace_diff",
+    "df_diff",
+    "pct_1st_in_diff",
+    "pct_1st_won_diff",
+    "pct_2nd_won_diff",
+    "pct_bp_saved_diff",
+    "pct_ret_1st_diff",
+    "pct_ret_2nd_diff",
+    "h2h_score",
+    "best_of",
+    "surface_hard",
+    "surface_clay",
+    "surface_grass"
+  ],
+  "n_features": 18,
+  "surfaces": [
+    "Hard",
+    "Clay",
+    "Grass"
+  ],
+  "results": {
+    "Hard": {
+      "accuracy": 0.6588309407234192,
+      "auc": 0.7204298377037048
+    },
+    "Clay": {
+      "accuracy": 0.6536421775817871,
+      "auc": 0.7095532417297363
+    },
+    "Grass": {
+      "accuracy": 0.6599723100662231,
+      "auc": 0.7241294384002686
+    }
+  }
+}
