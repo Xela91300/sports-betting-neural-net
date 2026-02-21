@@ -33,3 +33,35 @@ basketball:
     - points_avg_away
     - reb_avg_away
     - eff_rating_away
+
+
+
+football:
+  features:
+    - home_form
+    - away_form
+    - home_rank
+    - away_rank
+    - home_odds
+    - away_odds
+    - home_advantage
+
+tennis:
+  features:
+    - player1_rank
+    - player2_rank
+    - player1_form
+    - player2_form
+    - surface_clay
+    - surface_grass
+    - head_to_head
+
+basketball:
+  features:
+    - home_form
+    - away_form
+    - home_ppg
+    - away_ppg
+    - pace
+    - home_odds
+    - away_odds
