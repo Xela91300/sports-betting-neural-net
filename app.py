@@ -11,7 +11,7 @@ import joblib  # pour charger le scaler si tu l'as sauvegardé
 # ────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).parent
 MODELS_DIR = ROOT_DIR / "models"
-DATA_DIR = ROOT_DIR / "data"
+DATA_DIR = ROOT_DIR / "src" / "data"
 DATA_RAW_DIR = DATA_DIR / "raw"
 DATA_PROCESSED_DIR = DATA_DIR / "processed"
 CONFIG_PATH = ROOT_DIR / "config" / "config.yaml"
