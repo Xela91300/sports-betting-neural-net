@@ -11,7 +11,7 @@ import joblib  # pour charger le scaler si tu l'as sauvegardé
 # ────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).parent
 MODELS_DIR = ROOT_DIR / "models"
-DATA_DIR = ROOT_DIR / "src" / "data"
+DATA_DIR = ROOT_DIR / "src" / "data"          # ✅ CORRIGÉ : src/data au lieu de data
 DATA_RAW_DIR = DATA_DIR / "raw"
 DATA_PROCESSED_DIR = DATA_DIR / "processed"
 CONFIG_PATH = ROOT_DIR / "config" / "config.yaml"
@@ -62,7 +62,7 @@ SPORT_CONFIG = {
             "back_to_back", "spread", "points_avg_away"
         ]),
         "desc": "Victoire de l'équipe à domicile",
-        "type": "classification",  # ou "regression" si over/under
+        "type": "classification",
         "data_pattern": "*basket*.csv"
     }
 }
@@ -112,8 +112,16 @@ def list_available_datasets(sport):
         if tml_dir.exists():
             candidates.extend(tml_dir.glob("*.csv"))
 
+    # Dédoublonner
+    seen = set()
+    unique_candidates = []
+    for p in candidates:
+        if p not in seen:
+            seen.add(p)
+            unique_candidates.append(p)
+
     datasets = []
-    for p in sorted(candidates, key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in sorted(unique_candidates, key=lambda x: x.stat().st_mtime, reverse=True):
         if p.is_file():
             datasets.append({
                 "name": p.name,
@@ -142,7 +150,7 @@ def load_dataset(path_str: str):
 st.set_page_config(page_title="Sports Betting NN", page_icon="🎾⚽🏀", layout="wide")
 
 st.title("Prédictions Paris Sportifs – Réseaux de Neurones")
-st.caption("Données dans data/raw et data/processed – Modèles dans models/")
+st.caption(f"Données dans {DATA_RAW_DIR} – Modèles dans models/")
 
 # Sidebar
 with st.sidebar:
@@ -156,7 +164,7 @@ with st.sidebar:
                 st.caption(f"• {ds['name']}  ({ds['size_kb']:.1f} KB)  – {ds['modified']}")
 
     st.markdown("---")
-    st.caption("Chemins attendus :\n• data/raw/\n• data/processed/\n• models/")
+    st.caption(f"Chemins utilisés :\n• {DATA_RAW_DIR}\n• {DATA_PROCESSED_DIR}\n• {MODELS_DIR}")
 
 # Colonnes principales
 col_left, col_right = st.columns([1, 4])
@@ -173,7 +181,7 @@ if sport:
 
     with tab_pred:
         st.subheader(f"Prédiction – {sport}")
-        
+
         if not model:
             st.warning(f"Modèle {sport} introuvable → {cfg['model_path']}")
         else:
@@ -188,7 +196,7 @@ if sport:
             for idx, feat in enumerate(cfg["features"]):
                 with cols[idx % 3]:
                     label = feat.replace("_", " ").title()
-                    
+
                     if "surface" in feat or "is_" in feat or "has_" in feat:
                         user_values[feat] = st.checkbox(label, value=False)
                     elif "odds" in feat or "cote" in feat:
@@ -200,14 +208,12 @@ if sport:
 
             if st.button("Prédire", type="primary"):
                 try:
-                    # Préparer le vecteur
                     X = np.array([user_values.get(f, 0.0) for f in cfg["features"]]).reshape(1, -1)
-                    
-                    # Appliquer scaler si disponible
+
                     if scaler:
                         X = scaler.transform(X)
                         st.caption("Données normalisées (scaler appliqué)")
-                    
+
                     with st.spinner("Prédiction..."):
                         pred = model.predict(X, verbose=0)
                         value = float(pred[0][0])
@@ -243,26 +249,29 @@ if sport:
                 if df is not None:
                     st.markdown(f"**Aperçu : {selected}** ({len(df)} lignes)")
                     st.dataframe(df.head(15))
-                    
+
                     with st.expander("Statistiques descriptives"):
                         st.dataframe(df.describe())
-                    
+
                     with st.expander("Colonnes"):
                         st.write(list(df.columns))
         else:
-            st.info("Aucune donnée trouvée. Placez vos CSV dans data/raw/ ou data/processed/")
+            st.info(f"Aucune donnée trouvée. Placez vos CSV dans :\n- `src/data/raw/`\n- `src/data/raw/tml-tennis/`")
 
     with tab_info:
         st.subheader("Informations techniques")
         st.markdown("**Features attendues :**")
         for f in cfg["features"]:
             st.markdown(f"- `{f}`")
-        
+
         st.markdown("**Modèle :**")
         st.code(f"{cfg['model_path'].name if cfg['model_path'].exists() else 'Non trouvé'}")
-        
+
         st.markdown("**Scaler :**")
         st.code("Présent" if scaler else "Absent (prédictions non normalisées)")
+
+        st.markdown("**Chemins de données :**")
+        st.code(f"RAW     : {DATA_RAW_DIR}\nPROCESSED: {DATA_PROCESSED_DIR}")
 
 st.markdown("---")
 st.caption("Projet éducatif – Pas de garantie de gain – Jouez responsablement")
