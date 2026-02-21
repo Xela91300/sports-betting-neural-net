@@ -3,20 +3,18 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import yaml
-import glob
-import joblib  # pour charger le scaler si tu l'as sauvegardé
+import joblib
 
 # ────────────────────────────────────────────────
-# Chemins fixes (plus fiables sur Streamlit Cloud & local)
+# Chemins
 # ────────────────────────────────────────────────
-ROOT_DIR = Path(__file__).parent
-MODELS_DIR = ROOT_DIR / "models"
-DATA_DIR = ROOT_DIR / "src" / "data"          # ✅ CORRIGÉ : src/data au lieu de data
-DATA_RAW_DIR = DATA_DIR / "raw"
-DATA_PROCESSED_DIR = DATA_DIR / "processed"
-CONFIG_PATH = ROOT_DIR / "config" / "config.yaml"
+ROOT_DIR          = Path(__file__).parent
+MODELS_DIR        = ROOT_DIR / "models"
+DATA_DIR          = ROOT_DIR / "src" / "data"
+DATA_RAW_DIR      = DATA_DIR / "raw"
+DATA_PROCESSED_DIR= DATA_DIR / "processed"
+CONFIG_PATH       = ROOT_DIR / "config" / "config.yaml"
 
-# Créer les dossiers s'ils n'existent pas
 for directory in [MODELS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -47,10 +45,10 @@ SPORT_CONFIG = {
         "model_path": MODELS_DIR / "tennis_model.h5",
         "scaler_path": MODELS_DIR / "tennis_scaler.joblib",
         "features": config.get("tennis", {}).get("features", [
-    "rank_diff", "pts_diff", "age_diff",
-    "surface_hard", "surface_clay", "surface_grass",
-    "best_of", "ace_diff", "df_diff", "1st_pct_diff", "bp_pct_diff"
-]),
+            "rank_diff", "pts_diff", "age_diff",
+            "surface_hard", "surface_clay", "surface_grass",
+            "best_of", "ace_diff", "df_diff", "1st_pct_diff", "bp_pct_diff"
+        ]),
         "desc": "Victoire du joueur 1",
         "type": "classification",
         "data_pattern": "*tennis*.csv"
@@ -69,7 +67,24 @@ SPORT_CONFIG = {
 }
 
 # ────────────────────────────────────────────────
-# Chargement du modèle (Keras direct – plus fiable)
+# Labels explicites pour les features Tennis
+# ────────────────────────────────────────────────
+TENNIS_FEATURE_LABELS = {
+    "rank_diff":     "Différence de classement (J1 - J2)",
+    "pts_diff":      "Différence de points ATP (J1 - J2)",
+    "age_diff":      "Différence d'âge (J1 - J2)",
+    "surface_hard":  "Surface : Hard",
+    "surface_clay":  "Surface : Clay",
+    "surface_grass": "Surface : Grass",
+    "best_of":       "Format (Best of 3 ou 5)",
+    "ace_diff":      "Différence d'aces (J1 - J2)",
+    "df_diff":       "Différence de doubles fautes (J1 - J2)",
+    "1st_pct_diff":  "Différence % 1ère balle (J1 - J2)",
+    "bp_pct_diff":   "Différence % BP sauvées (J1 - J2)",
+}
+
+# ────────────────────────────────────────────────
+# Chargement modèle
 # ────────────────────────────────────────────────
 @st.cache_resource
 def load_cached_model(sport):
@@ -83,7 +98,6 @@ def load_cached_model(sport):
         st.error(f"Erreur chargement modèle {sport}: {e}")
         return None
 
-# Chargement du scaler (si tu l'as sauvegardé pendant l'entraînement)
 @st.cache_resource
 def load_cached_scaler(sport):
     path = SPORT_CONFIG[sport].get("scaler_path")
@@ -95,7 +109,7 @@ def load_cached_scaler(sport):
     return None
 
 # ────────────────────────────────────────────────
-# Liste des datasets disponibles
+# Datasets
 # ────────────────────────────────────────────────
 @st.cache_data(ttl=600)
 def list_available_datasets(sport):
@@ -107,22 +121,20 @@ def list_available_datasets(sport):
             candidates.extend(base.rglob(pattern))
             candidates.extend(base.rglob(f"**/*{sport.lower()}*.csv"))
 
-    # Spécial TennisMyLife
     if sport == "Tennis":
         tml_dir = DATA_RAW_DIR / "tml-tennis"
         if tml_dir.exists():
             candidates.extend(tml_dir.glob("*.csv"))
 
-    # Dédoublonner
     seen = set()
-    unique_candidates = []
+    unique = []
     for p in candidates:
         if p not in seen:
             seen.add(p)
-            unique_candidates.append(p)
+            unique.append(p)
 
     datasets = []
-    for p in sorted(unique_candidates, key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in sorted(unique, key=lambda x: x.stat().st_mtime, reverse=True):
         if p.is_file():
             datasets.append({
                 "name": p.name,
@@ -133,16 +145,12 @@ def list_available_datasets(sport):
             })
     return datasets
 
-# ────────────────────────────────────────────────
-# Chargement d'un dataset
-# ────────────────────────────────────────────────
 @st.cache_data
 def load_dataset(path_str: str):
-    path = Path(path_str)
     try:
-        return pd.read_csv(path)
+        return pd.read_csv(path_str)
     except Exception as e:
-        st.error(f"Impossible de lire {path.name}: {e}")
+        st.error(f"Impossible de lire {Path(path_str).name}: {e}")
         return None
 
 # ────────────────────────────────────────────────
@@ -151,7 +159,7 @@ def load_dataset(path_str: str):
 st.set_page_config(page_title="Sports Betting NN", page_icon="🎾⚽🏀", layout="wide")
 
 st.title("Prédictions Paris Sportifs – Réseaux de Neurones")
-st.caption(f"Données dans {DATA_RAW_DIR} – Modèles dans models/")
+st.caption("Données dans src/data/raw – Modèles dans models/")
 
 # Sidebar
 with st.sidebar:
@@ -165,49 +173,59 @@ with st.sidebar:
                 st.caption(f"• {ds['name']}  ({ds['size_kb']:.1f} KB)  – {ds['modified']}")
 
     st.markdown("---")
-    st.caption(f"Chemins utilisés :\n• {DATA_RAW_DIR}\n• {DATA_PROCESSED_DIR}\n• {MODELS_DIR}")
+    st.caption("Chemins utilisés :\n• src/data/raw/\n• src/data/processed/\n• models/")
 
-# Colonnes principales
+# Sélection sport
 col_left, col_right = st.columns([1, 4])
-
 with col_left:
     sport = st.selectbox("Sport", list(SPORT_CONFIG.keys()))
 
 if sport:
-    cfg = SPORT_CONFIG[sport]
-    model = load_cached_model(sport)
+    cfg    = SPORT_CONFIG[sport]
+    model  = load_cached_model(sport)
     scaler = load_cached_scaler(sport)
 
     tab_pred, tab_data, tab_info = st.tabs(["Prédiction", "Données", "Infos"])
 
+    # ── Onglet Prédiction ────────────────────────────────────────────────────
     with tab_pred:
         st.subheader(f"Prédiction – {sport}")
 
         if not model:
             st.warning(f"Modèle {sport} introuvable → {cfg['model_path']}")
         else:
-            st.success("Modèle chargé")
+            st.success(f"✅ Modèle chargé ({len(cfg['features'])} features)")
             st.info(f"Objectif : {cfg['desc']}")
 
             st.markdown("### Caractéristiques du match")
-
             user_values = {}
             cols = st.columns(3)
 
             for idx, feat in enumerate(cfg["features"]):
                 with cols[idx % 3]:
-                    label = feat.replace("_", " ").title()
+                    if sport == "Tennis" and feat in TENNIS_FEATURE_LABELS:
+                        label = TENNIS_FEATURE_LABELS[feat]
+                    else:
+                        label = feat.replace("_", " ").title()
 
-                    if "surface" in feat or "is_" in feat or "has_" in feat:
-                        user_values[feat] = st.checkbox(label, value=False)
+                    if feat in ("surface_hard", "surface_clay", "surface_grass"):
+                        user_values[feat] = int(st.checkbox(label, value=False))
+                    elif feat == "best_of":
+                        user_values[feat] = st.selectbox(label, [3, 5])
                     elif "odds" in feat or "cote" in feat:
                         user_values[feat] = st.number_input(label, 1.01, 50.0, 2.0, 0.1)
-                    elif "rank" in feat or "diff" in feat:
-                        user_values[feat] = st.number_input(label, 1, 1000, 100, 1, format="%d")
+                    elif feat in ("rank_diff", "pts_diff"):
+                        user_values[feat] = st.number_input(label, -2000, 2000, 0, 1, format="%d")
+                    elif feat in ("ace_diff", "df_diff"):
+                        user_values[feat] = st.number_input(label, -30, 30, 0, 1, format="%d")
+                    elif feat in ("1st_pct_diff", "bp_pct_diff"):
+                        user_values[feat] = st.number_input(label, -1.0, 1.0, 0.0, 0.01)
+                    elif feat == "age_diff":
+                        user_values[feat] = st.number_input(label, -20.0, 20.0, 0.0, 0.5)
                     else:
-                        user_values[feat] = st.number_input(label, -10.0, 50.0, 0.0, 0.1)
+                        user_values[feat] = st.number_input(label, -100.0, 100.0, 0.0, 0.1)
 
-            if st.button("Prédire", type="primary"):
+            if st.button("🔮 Prédire", type="primary"):
                 try:
                     X = np.array([user_values.get(f, 0.0) for f in cfg["features"]]).reshape(1, -1)
 
@@ -215,26 +233,27 @@ if sport:
                         X = scaler.transform(X)
                         st.caption("Données normalisées (scaler appliqué)")
 
-                    with st.spinner("Prédiction..."):
-                        pred = model.predict(X, verbose=0)
+                    with st.spinner("Prédiction en cours..."):
+                        pred  = model.predict(X, verbose=0)
                         value = float(pred[0][0])
 
                     if cfg["type"] == "classification":
                         proba = value
-                        st.metric("Probabilité victoire", f"{proba:.1%}")
+                        st.metric("Probabilité victoire Joueur 1", f"{proba:.1%}")
                         st.progress(proba)
                         if proba > 0.65:
-                            st.success("Valeur potentielle détectée")
+                            st.success("✅ Valeur potentielle détectée")
                         elif proba > 0.5:
-                            st.info("Légère faveur")
+                            st.info("ℹ️ Légère faveur pour le Joueur 1")
                         else:
-                            st.warning("Faible probabilité")
+                            st.warning("⚠️ Joueur 2 favori selon le modèle")
                     else:
                         st.metric("Valeur prédite", f"{value:.2f}")
 
                 except Exception as e:
                     st.error(f"Erreur prédiction : {e}")
 
+    # ── Onglet Données ───────────────────────────────────────────────────────
     with tab_data:
         st.subheader(f"Données – {sport}")
         datasets = list_available_datasets(sport)
@@ -246,33 +265,34 @@ if sport:
             selected = st.selectbox("Fichier à explorer", [d["name"] for d in datasets])
             if selected:
                 file = next(d for d in datasets if d["name"] == selected)
-                df = load_dataset(file["path"])
+                df   = load_dataset(file["path"])
                 if df is not None:
-                    st.markdown(f"**Aperçu : {selected}** ({len(df)} lignes)")
+                    st.markdown(f"**Aperçu : {selected}** ({len(df)} lignes, {len(df.columns)} colonnes)")
                     st.dataframe(df.head(15))
-
                     with st.expander("Statistiques descriptives"):
                         st.dataframe(df.describe())
-
-                    with st.expander("Colonnes"):
+                    with st.expander("Colonnes disponibles"):
                         st.write(list(df.columns))
         else:
-            st.info(f"Aucune donnée trouvée. Placez vos CSV dans :\n- `src/data/raw/`\n- `src/data/raw/tml-tennis/`")
+            st.info("Aucune donnée trouvée. Placez vos CSV dans src/data/raw/ ou src/data/raw/tml-tennis/")
 
+    # ── Onglet Infos ─────────────────────────────────────────────────────────
     with tab_info:
         st.subheader("Informations techniques")
+
         st.markdown("**Features attendues :**")
         for f in cfg["features"]:
-            st.markdown(f"- `{f}`")
+            label = TENNIS_FEATURE_LABELS.get(f, f) if sport == "Tennis" else f
+            st.markdown(f"- `{f}` — {label}")
 
         st.markdown("**Modèle :**")
-        st.code(f"{cfg['model_path'].name if cfg['model_path'].exists() else 'Non trouvé'}")
+        st.code(cfg['model_path'].name if cfg['model_path'].exists() else '❌ Non trouvé')
 
         st.markdown("**Scaler :**")
-        st.code("Présent" if scaler else "Absent (prédictions non normalisées)")
+        st.code("✅ Présent" if scaler else "⚠️ Absent (prédictions non normalisées)")
 
-        st.markdown("**Chemins de données :**")
-        st.code(f"RAW     : {DATA_RAW_DIR}\nPROCESSED: {DATA_PROCESSED_DIR}")
+        st.markdown("**Chemins :**")
+        st.code(f"RAW      : {DATA_RAW_DIR}\nPROCESSED: {DATA_PROCESSED_DIR}\nMODELS   : {MODELS_DIR}")
 
 st.markdown("---")
 st.caption("Projet éducatif – Pas de garantie de gain – Jouez responsablement")
