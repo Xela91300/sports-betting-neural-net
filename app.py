@@ -371,18 +371,32 @@ def load_meta():
 # ─────────────────────────────────────────────────────────────
 # CHARGEMENT DONNÉES
 # ─────────────────────────────────────────────────────────────
-# Mapping colonnes tennis-data.co.uk → format Jeff Sackmann
+# ── Mapping tennis-data.co.uk (WTA/ATP) → format standard ──────
+# Format tennis-data : séparateur ; | date DD/MM/YYYY | décimales virgule
 TENNIS_DATA_MAP = {
-    "Date": "tourney_date", "Tournament": "tourney_name",
-    "Surface": "surface", "Series": "tourney_level", "Tier": "tourney_level",
-    "Court": "indoor", "Round": "round", "Best of": "best_of", "BestOf": "best_of",
-    "Winner": "winner_name", "Loser": "loser_name",
-    "WRank": "winner_rank", "LRank": "loser_rank",
-    "WPts": "winner_rank_points", "LPts": "loser_rank_points",
-    "WAce": "w_ace", "LAce": "l_ace", "WDF": "w_df", "LDF": "l_df",
-    "WBpFaced": "w_bpFaced", "LBpFaced": "l_bpFaced",
-    "WBpSaved": "w_bpSaved", "LBpSaved": "l_bpSaved",
-    "Score": "score",
+    "Date":        "tourney_date",
+    "Tournament":  "tourney_name",
+    "Location":    "tourney_location",
+    "Surface":     "surface",
+    "Tier":        "tourney_level",   # WTA
+    "Series":      "tourney_level",   # ATP
+    "Court":       "indoor",
+    "Round":       "round",
+    "Best of":     "best_of",
+    "Winner":      "winner_name",
+    "Loser":       "loser_name",
+    "WRank":       "winner_rank",
+    "LRank":       "loser_rank",
+    "WPts":        "winner_rank_points",
+    "LPts":        "loser_rank_points",
+    "Wsets":       "w_sets",
+    "Lsets":       "l_sets",
+    # Stats service (ATP uniquement sur tennis-data)
+    "WAce":        "w_ace",   "LAce": "l_ace",
+    "WDF":         "w_df",    "LDF":  "l_df",
+    "WBpFaced":    "w_bpFaced", "LBpFaced": "l_bpFaced",
+    "WBpSaved":    "w_bpSaved", "LBpSaved": "l_bpSaved",
+    "Score":       "score",
 }
 
 REQUIRED_COLS = {
@@ -393,40 +407,65 @@ REQUIRED_COLS = {
 def normalize_surface(s):
     if pd.isna(s): return None
     s = str(s).strip().lower()
-    if s in ("hard", "hardcourt", "hard (i)", "hard (o)"): return "Hard"
-    if s in ("clay", "terre battue"):                       return "Clay"
-    if s in ("grass", "gazon"):                             return "Grass"
-    return s.capitalize()
+    if "hard" in s:  return "Hard"
+    if "clay" in s:  return "Clay"
+    if "grass" in s: return "Grass"
+    return None
+
+def parse_numeric_fr(series):
+    """Convertit les nombres à virgule française (332,25 → 332.25)."""
+    if series.dtype == object:
+        series = series.astype(str).str.replace(",", ".", regex=False)
+    return pd.to_numeric(series, errors="coerce")
 
 def parse_date_flexible(series):
-    result = pd.to_datetime(series, format="%Y%m%d", errors="coerce")
+    """Gère YYYYMMDD (Jeff Sackmann) et DD/MM/YYYY (tennis-data)."""
+    s = series.astype(str).str.strip()
+    result = pd.to_datetime(s, format="%Y%m%d", errors="coerce")
     mask = result.isna()
     if mask.any():
-        result[mask] = pd.to_datetime(series[mask], format="%d/%m/%Y", errors="coerce")
+        result[mask] = pd.to_datetime(s[mask], format="%d/%m/%Y", errors="coerce")
     mask = result.isna()
     if mask.any():
-        result[mask] = pd.to_datetime(series[mask], infer_datetime_format=True, errors="coerce")
+        result[mask] = pd.to_datetime(s[mask], dayfirst=True, errors="coerce")
     return result
 
 def read_csv_robust(filepath):
-    for enc in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
+    """Détecte automatiquement le séparateur (, ou ;) et l'encodage."""
+    for enc in ["utf-8", "latin-1", "cp1252"]:
         try:
-            return pd.read_csv(filepath, low_memory=False,
-                               encoding=enc, on_bad_lines="skip")
+            with open(filepath, "r", encoding=enc) as fh:
+                first = fh.readline()
+            sep = ";" if first.count(";") > first.count(",") else ","
+            return pd.read_csv(filepath, sep=sep, encoding=enc,
+                               on_bad_lines="skip", low_memory=False)
         except Exception:
             continue
-    return pd.read_csv(filepath, low_memory=False, encoding="latin-1",
-                       on_bad_lines="skip", encoding_errors="replace")
+    return pd.read_csv(filepath, sep=";", encoding="latin-1",
+                       on_bad_lines="skip", encoding_errors="replace",
+                       low_memory=False)
 
 def apply_column_mapping(df):
+    """Normalise les colonnes tennis-data vers le format standard."""
     cols = set(df.columns)
+    # Détecter format tennis-data (contient 'Winner' ou 'Date')
     if "Winner" in cols or "Date" in cols:
         rename = {k: v for k, v in TENNIS_DATA_MAP.items() if k in cols}
         df = df.rename(columns=rename)
-        for col, default in [("winner_rank_points", np.nan), ("loser_rank_points", np.nan),
-                              ("winner_age", np.nan), ("loser_age", np.nan), ("best_of", 3)]:
+        # Convertir les points avec virgule décimale
+        for col in ["winner_rank_points", "loser_rank_points"]:
+            if col in df.columns:
+                df[col] = parse_numeric_fr(df[col])
+        # Ajouter colonnes absentes
+        defaults = {
+            "winner_rank_points": np.nan, "loser_rank_points": np.nan,
+            "winner_age": np.nan, "loser_age": np.nan,
+            "best_of": 3, "tourney_level": "A",
+        }
+        for col, val in defaults.items():
             if col not in df.columns:
-                df[col] = default
+                df[col] = val
+        # Stats service absentes dans tennis-data WTA → NaN
         for col in ["w_ace","w_df","w_svpt","w_1stIn","w_1stWon","w_2ndWon",
                     "w_bpSaved","w_bpFaced","l_ace","l_df","l_svpt",
                     "l_1stIn","l_1stWon","l_2ndWon","l_bpSaved","l_bpFaced"]:
@@ -444,11 +483,13 @@ def load_all_data():
         try:
             df = read_csv_robust(f)
             df = apply_column_mapping(df)
-            missing = REQUIRED_COLS - set(df.columns)
-            if missing:
+            # Vérifier colonnes essentielles
+            if not REQUIRED_COLS.issubset(set(df.columns)):
                 continue
-            df["surface"] = df["surface"].apply(normalize_surface)
-            df["tourney_date"] = parse_date_flexible(df["tourney_date"].astype(str))
+            df["surface"]      = df["surface"].apply(normalize_surface)
+            df["tourney_date"] = parse_date_flexible(df["tourney_date"])
+            df["winner_rank"]  = pd.to_numeric(df["winner_rank"], errors="coerce")
+            df["loser_rank"]   = pd.to_numeric(df["loser_rank"],  errors="coerce")
             df = df[df["tourney_date"].notna()]
             if "wta" in f.name.lower():
                 wta_dfs.append(df)
@@ -456,8 +497,8 @@ def load_all_data():
                 atp_dfs.append(df)
         except Exception:
             pass
-    atp = pd.concat(atp_dfs, ignore_index=True).sort_values("tourney_date") if atp_dfs else None
-    wta = pd.concat(wta_dfs, ignore_index=True).sort_values("tourney_date") if wta_dfs else None
+    atp = pd.concat(atp_dfs, ignore_index=True).sort_values("tourney_date").reset_index(drop=True) if atp_dfs else None
+    wta = pd.concat(wta_dfs, ignore_index=True).sort_values("tourney_date").reset_index(drop=True) if wta_dfs else None
     return atp, wta
 
 # ─────────────────────────────────────────────────────────────
