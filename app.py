@@ -371,6 +371,11 @@ def load_meta():
 # ─────────────────────────────────────────────────────────────
 # CHARGEMENT DONNÉES
 # ─────────────────────────────────────────────────────────────
+REQUIRED_COLS = {
+    "tourney_date", "surface", "winner_name", "loser_name",
+    "winner_rank", "loser_rank", "winner_rank_points", "loser_rank_points"
+}
+
 def read_csv_robust(filepath):
     """
     Lit un CSV en essayant plusieurs encodages.
@@ -395,9 +400,14 @@ def load_all_data():
     for f in csvs:
         try:
             df = read_csv_robust(f)
+            # Vérifier que les colonnes essentielles sont présentes
+            missing = REQUIRED_COLS - set(df.columns)
+            if missing:
+                continue  # Fichier mal formaté, on l'ignore silencieusement
             df["tourney_date"] = pd.to_datetime(
                 df["tourney_date"], format="%Y%m%d", errors="coerce"
             )
+            df = df[df["tourney_date"].notna()]  # Supprimer les dates invalides
             if "wta" in f.name.lower():
                 wta_dfs.append(df)
             else:
