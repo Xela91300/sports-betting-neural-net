@@ -371,6 +371,21 @@ def load_meta():
 # ─────────────────────────────────────────────────────────────
 # CHARGEMENT DONNÉES
 # ─────────────────────────────────────────────────────────────
+def read_csv_robust(filepath):
+    """
+    Lit un CSV en essayant plusieurs encodages.
+    Gère les noms avec accents/caractères spéciaux (ñ, ü, č...)
+    fréquents dans les données WTA.
+    """
+    for enc in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
+        try:
+            return pd.read_csv(filepath, low_memory=False,
+                               encoding=enc, on_bad_lines="skip")
+        except Exception:
+            continue
+    return pd.read_csv(filepath, low_memory=False, encoding="latin-1",
+                       on_bad_lines="skip", encoding_errors="replace")
+
 @st.cache_data(ttl=600)
 def load_all_data():
     if not DATA_DIR.exists():
@@ -379,16 +394,15 @@ def load_all_data():
     atp_dfs, wta_dfs = [], []
     for f in csvs:
         try:
-            df = pd.read_csv(f, low_memory=False)
+            df = read_csv_robust(f)
             df["tourney_date"] = pd.to_datetime(
                 df["tourney_date"], format="%Y%m%d", errors="coerce"
             )
-            name = f.name.lower()
-            if "wta" in name:
+            if "wta" in f.name.lower():
                 wta_dfs.append(df)
             else:
                 atp_dfs.append(df)
-        except:
+        except Exception:
             pass
     atp = pd.concat(atp_dfs, ignore_index=True).sort_values("tourney_date") if atp_dfs else None
     wta = pd.concat(wta_dfs, ignore_index=True).sort_values("tourney_date") if wta_dfs else None
