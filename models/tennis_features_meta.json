@@ -17,26 +17,60 @@
     "best_of",
     "surface_hard",
     "surface_clay",
-    "surface_grass"
+    "surface_grass",
+    "level_gs",
+    "level_m1000",
+    "level_500"
   ],
-  "n_features": 18,
+  "n_features": 21,
   "surfaces": [
     "Hard",
     "Clay",
     "Grass"
   ],
+  "tours": [
+    "atp",
+    "wta"
+  ],
   "results": {
-    "Hard": {
-      "accuracy": 0.6581554412841797,
-      "auc": 0.7189367413520813
+    "atp_Hard": {
+      "accuracy": 0.6496820449829102,
+      "auc": 0.7111416459083557,
+      "status": "trained"
     },
-    "Clay": {
-      "accuracy": 0.6558749675750732,
-      "auc": 0.7094637751579285
+    "atp_Clay": {
+      "accuracy": 0.636250376701355,
+      "auc": 0.7066457271575928,
+      "status": "trained"
     },
-    "Grass": {
-      "accuracy": 0.6629732251167297,
-      "auc": 0.7220427393913269
+    "atp_Grass": {
+      "accuracy": 0.6539668440818787,
+      "auc": 0.7103335857391357,
+      "status": "trained"
+    },
+    "wta_Hard": {
+      "accuracy": 0.6230911016464233,
+      "auc": 0.6807683110237122,
+      "status": "trained"
+    },
+    "wta_Clay": {
+      "accuracy": 0.6444306969642639,
+      "auc": 0.7062833309173584,
+      "status": "trained"
+    },
+    "wta_Grass": {
+      "accuracy": 0.613694429397583,
+      "auc": 0.6609035730361938,
+      "status": "trained"
     }
+  },
+  "last_update": "2026-02-22",
+  "start_year": 2007,
+  "total_matches_used": 99336,
+  "params": {
+    "n_form": 5,
+    "n_stats": 15,
+    "fatigue_days": 7,
+    "split": "chronological 80/20"
   }
 }
