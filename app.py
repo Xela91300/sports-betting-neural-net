@@ -2,100 +2,357 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from pathlib import Path
-import yaml
 import joblib
 import json
 
-# ────────────────────────────────────────────────
-# Chemins
-# ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# CONFIGURATION
+# ─────────────────────────────────────────────────────────────
 ROOT_DIR           = Path(__file__).parent
 MODELS_DIR         = ROOT_DIR / "models"
-DATA_DIR           = ROOT_DIR / "src" / "data"
-DATA_RAW_DIR       = DATA_DIR / "raw"
-DATA_PROCESSED_DIR = DATA_DIR / "processed"
-CONFIG_PATH        = ROOT_DIR / "config" / "config.yaml"
+DATA_DIR           = ROOT_DIR / "src" / "data" / "raw" / "tml-tennis"
+MODELS_DIR.mkdir(exist_ok=True)
 
-for directory in [MODELS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR]:
-    directory.mkdir(parents=True, exist_ok=True)
-
-config = {}
-if CONFIG_PATH.exists():
-    with open(CONFIG_PATH, "r") as f:
-        config = yaml.safe_load(f)
-
-# ────────────────────────────────────────────────
-# Features avancées (18 features)
-# ────────────────────────────────────────────────
-TENNIS_FEATURES = [
+FEATURES = [
     "rank_diff", "pts_diff", "age_diff",
-    "form_diff",
-    "fatigue_diff",
+    "form_diff", "fatigue_diff",
     "ace_diff", "df_diff",
     "pct_1st_in_diff", "pct_1st_won_diff", "pct_2nd_won_diff",
     "pct_bp_saved_diff",
     "pct_ret_1st_diff", "pct_ret_2nd_diff",
-    "h2h_score",
-    "best_of",
+    "h2h_score", "best_of",
     "surface_hard", "surface_clay", "surface_grass",
+    "level_gs", "level_m1000", "level_500",
 ]
 
-SPORT_CONFIG = {
-    "Football": {
-        "model_path": MODELS_DIR / "football_model.h5",
-        "scaler_path": MODELS_DIR / "football_scaler.joblib",
-        "features": config.get("football", {}).get("features", [
-            "home_form_5", "away_form_5", "home_goals_avg", "away_goals_avg",
-            "diff_classement", "odds_home", "odds_draw", "odds_away"
-        ]),
-        "desc": "Victoire de l'équipe à domicile",
-        "type": "classification",
-        "data_pattern": "*football*.csv"
-    },
-    "Tennis": {
-        "features": TENNIS_FEATURES,
-        "desc": "Victoire du joueur 1",
-        "type": "classification",
-        "data_pattern": "*tennis*.csv"
-    },
-    "Basketball": {
-        "model_path": MODELS_DIR / "basketball_model.h5",
-        "scaler_path": MODELS_DIR / "basketball_scaler.joblib",
-        "features": config.get("basketball", {}).get("features", [
-            "points_avg_home", "reb_avg_home", "eff_rating_home",
-            "back_to_back", "spread", "points_avg_away"
-        ]),
-        "desc": "Victoire de l'équipe à domicile",
-        "type": "classification",
-        "data_pattern": "*basket*.csv"
-    }
+SURFACES  = ["Hard", "Clay", "Grass"]
+TOURS     = {"ATP": "atp", "WTA": "wta"}
+
+# ─────────────────────────────────────────────────────────────
+# CSS — Dark Luxury Tennis
+# ─────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="TennisIQ — Prédictions IA",
+    page_icon="🎾",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;900&family=DM+Sans:wght@300;400;500&display=swap');
+
+/* ── Base ── */
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+    background-color: #0a0e0f;
+    color: #e8e0d0;
+}
+.stApp { background: #0a0e0f; }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0d1214 0%, #111a1c 100%);
+    border-right: 1px solid #1e2d2f;
+}
+[data-testid="stSidebar"] * { color: #c8c0b0 !important; }
+
+/* ── Header principal ── */
+.hero-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 3.2rem;
+    font-weight: 900;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, #7fff7a 0%, #3dd68c 40%, #00b894 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.1;
+    margin: 0;
+}
+.hero-sub {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.95rem;
+    color: #6b7c7e;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-top: 6px;
 }
 
-# ────────────────────────────────────────────────
-# Chargement modèles tennis (un par surface)
-# ────────────────────────────────────────────────
+/* ── Cards ── */
+.card {
+    background: linear-gradient(135deg, #111a1c 0%, #0f1719 100%);
+    border: 1px solid #1e2d2f;
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+    transition: border-color 0.3s;
+}
+.card:hover { border-color: #3dd68c44; }
+
+.card-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #e8e0d0;
+    margin-bottom: 4px;
+    letter-spacing: 0.3px;
+}
+.card-sub {
+    font-size: 0.78rem;
+    color: #4a5e60;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+/* ── Badge surface ── */
+.badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+.badge-hard  { background: #1a2e4a; color: #5ba3f5; border: 1px solid #2a4a6a; }
+.badge-clay  { background: #3a1a0a; color: #e07840; border: 1px solid #5a2a0a; }
+.badge-grass { background: #0a2a14; color: #4caf6a; border: 1px solid #0a4a1e; }
+.badge-atp   { background: #1a1a3a; color: #7a8af5; border: 1px solid #2a2a5a; }
+.badge-wta   { background: #3a0a2a; color: #f57ab0; border: 1px solid #5a0a3a; }
+.badge-gs    { background: #2a2000; color: #f5c842; border: 1px solid #4a3800; }
+
+/* ── Proba bar ── */
+.proba-container { margin: 20px 0; }
+.proba-label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.8rem;
+    color: #6b7c7e;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+}
+.proba-name {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #e8e0d0;
+}
+.proba-pct {
+    font-family: 'Playfair Display', serif;
+    font-size: 2.8rem;
+    font-weight: 900;
+    line-height: 1;
+}
+.proba-pct-green { color: #3dd68c; }
+.proba-pct-dim   { color: #2a3e40; }
+
+.bar-track {
+    height: 8px;
+    background: #1a2a2c;
+    border-radius: 4px;
+    margin: 10px 0;
+    overflow: hidden;
+}
+.bar-fill-green {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #3dd68c, #7fff7a);
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bar-fill-dim {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #1e3a4c, #2a5060);
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Confidence gauge ── */
+.conf-score {
+    font-family: 'Playfair Display', serif;
+    font-size: 4rem;
+    font-weight: 900;
+    line-height: 1;
+}
+.conf-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-top: 4px;
+}
+
+/* ── Stat row ── */
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #141e20;
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-key {
+    font-size: 0.8rem;
+    color: #4a5e60;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+.stat-val {
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    font-size: 0.95rem;
+    color: #c8c0b0;
+}
+.stat-val-green { color: #3dd68c; }
+.stat-val-red   { color: #e07878; }
+
+/* ── H2H score ── */
+.h2h-score {
+    font-family: 'Playfair Display', serif;
+    font-size: 3rem;
+    font-weight: 900;
+    text-align: center;
+    color: #3dd68c;
+}
+.h2h-vs {
+    font-size: 0.7rem;
+    color: #4a5e60;
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    text-align: center;
+}
+
+/* ── Divider ── */
+.divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #1e2d2f 30%, #1e2d2f 70%, transparent);
+    margin: 24px 0;
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    background: transparent;
+    gap: 8px;
+    border-bottom: 1px solid #1e2d2f;
+    padding-bottom: 0;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: #4a5e60 !important;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.8rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 10px 20px;
+    border-radius: 0 !important;
+    border-bottom: 2px solid transparent !important;
+}
+.stTabs [aria-selected="true"] {
+    color: #3dd68c !important;
+    border-bottom: 2px solid #3dd68c !important;
+}
+
+/* ── Selectbox ── */
+.stSelectbox > div > div {
+    background: #111a1c !important;
+    border: 1px solid #1e2d2f !important;
+    border-radius: 10px !important;
+    color: #e8e0d0 !important;
+}
+
+/* ── Slider ── */
+.stSlider [data-baseweb="slider"] div[role="slider"] {
+    background: #3dd68c !important;
+}
+.stSlider [data-testid="stSliderThumbValue"] { color: #3dd68c !important; }
+
+/* ── Buttons ── */
+.stButton > button {
+    background: linear-gradient(135deg, #1e4a3a, #2a6a4a) !important;
+    color: #7fff7a !important;
+    border: 1px solid #3dd68c44 !important;
+    border-radius: 10px !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 0.85rem !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    padding: 12px 32px !important;
+    transition: all 0.3s !important;
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, #2a6a4a, #3a8a5a) !important;
+    border-color: #3dd68c99 !important;
+    transform: translateY(-1px) !important;
+}
+
+/* ── Metric ── */
+[data-testid="stMetricValue"] {
+    font-family: 'Playfair Display', serif !important;
+    color: #3dd68c !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.72rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 2px !important;
+    color: #4a5e60 !important;
+}
+
+/* ── Expander ── */
+[data-testid="stExpander"] {
+    background: #111a1c !important;
+    border: 1px solid #1e2d2f !important;
+    border-radius: 12px !important;
+}
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+.dataframe { background: #111a1c !important; }
+
+/* ── Warning / Success / Info ── */
+[data-testid="stAlert"] { border-radius: 10px !important; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0a0e0f; }
+::-webkit-scrollbar-thumb { background: #1e2d2f; border-radius: 3px; }
+
+/* ── Footer ── */
+footer { visibility: hidden; }
+.footer-custom {
+    text-align: center;
+    padding: 24px;
+    color: #2a3e40;
+    font-size: 0.75rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border-top: 1px solid #141e20;
+    margin-top: 40px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+# CHARGEMENT MODÈLES
+# ─────────────────────────────────────────────────────────────
 @st.cache_resource
-def load_tennis_model(surface):
-    """Charge le modèle spécialisé pour une surface donnée."""
-    path = MODELS_DIR / f"tennis_model_{surface.lower()}.h5"
+def load_model(tour, surface):
+    """Charge le modèle pour un tour (atp/wta) et une surface."""
+    path = MODELS_DIR / f"tennis_model_{tour}_{surface.lower()}.h5"
     if not path.exists():
-        # Fallback sur modèle générique
-        path = MODELS_DIR / "tennis_model.h5"
+        path = MODELS_DIR / f"tennis_model_{surface.lower()}.h5"
     if not path.exists():
         return None
     try:
-        from tensorflow.keras.models import load_model
-        return load_model(str(path))
+        from tensorflow.keras.models import load_model as km
+        return km(str(path))
     except Exception as e:
-        st.error(f"Erreur chargement modèle Tennis {surface}: {e}")
+        st.error(f"Erreur modèle {tour} {surface}: {e}")
         return None
 
 @st.cache_resource
-def load_tennis_scaler(surface):
-    """Charge le scaler spécialisé pour une surface donnée."""
-    path = MODELS_DIR / f"tennis_scaler_{surface.lower()}.joblib"
+def load_scaler(tour, surface):
+    path = MODELS_DIR / f"tennis_scaler_{tour}_{surface.lower()}.joblib"
     if not path.exists():
-        path = MODELS_DIR / "tennis_scaler.joblib"
+        path = MODELS_DIR / f"tennis_scaler_{surface.lower()}.joblib"
     if not path.exists():
         return None
     try:
@@ -103,562 +360,804 @@ def load_tennis_scaler(surface):
     except:
         return None
 
-@st.cache_resource
-def load_cached_model(sport):
-    if sport == "Tennis":
-        return None  # Tennis utilise load_tennis_model(surface)
-    cfg  = SPORT_CONFIG[sport]
-    path = cfg.get("model_path")
-    if not path or not path.exists():
-        return None
-    try:
-        from tensorflow.keras.models import load_model
-        return load_model(str(path))
-    except Exception as e:
-        st.error(f"Erreur chargement modèle {sport}: {e}")
-        return None
-
-@st.cache_resource
-def load_cached_scaler(sport):
-    if sport == "Tennis":
-        return None
-    cfg  = SPORT_CONFIG[sport]
-    path = cfg.get("scaler_path")
-    if path and path.exists():
-        try:
-            return joblib.load(str(path))
-        except:
-            return None
-    return None
-
-# ────────────────────────────────────────────────
-# Métadonnées modèles tennis
-# ────────────────────────────────────────────────
 @st.cache_data
-def load_tennis_meta():
-    meta_path = MODELS_DIR / "tennis_features_meta.json"
-    if meta_path.exists():
-        with open(meta_path) as f:
+def load_meta():
+    p = MODELS_DIR / "tennis_features_meta.json"
+    if p.exists():
+        with open(p) as f:
             return json.load(f)
     return None
 
-# ────────────────────────────────────────────────
-# Datasets
-# ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# CHARGEMENT DONNÉES
+# ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=600)
-def list_available_datasets(sport):
-    pattern = SPORT_CONFIG[sport]["data_pattern"]
-    candidates = []
-    for base in [DATA_RAW_DIR, DATA_PROCESSED_DIR]:
-        if base.exists():
-            candidates.extend(base.rglob(pattern))
-            candidates.extend(base.rglob(f"**/*{sport.lower()}*.csv"))
-    if sport == "Tennis":
-        tml_dir = DATA_RAW_DIR / "tml-tennis"
-        if tml_dir.exists():
-            candidates.extend(tml_dir.glob("*.csv"))
-    seen, unique = set(), []
-    for p in candidates:
-        if p not in seen:
-            seen.add(p)
-            unique.append(p)
-    datasets = []
-    for p in sorted(unique, key=lambda x: x.stat().st_mtime, reverse=True):
-        if p.is_file():
-            datasets.append({
-                "name": p.name, "path": str(p),
-                "size_kb": round(p.stat().st_size / 1024, 1),
-                "modified": pd.Timestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
-                "location": str(p.relative_to(ROOT_DIR))
-            })
-    return datasets
+def load_all_data():
+    if not DATA_DIR.exists():
+        return None, None
+    csvs = sorted(DATA_DIR.glob("*.csv"))
+    atp_dfs, wta_dfs = [], []
+    for f in csvs:
+        try:
+            df = pd.read_csv(f, low_memory=False)
+            df["tourney_date"] = pd.to_datetime(
+                df["tourney_date"], format="%Y%m%d", errors="coerce"
+            )
+            name = f.name.lower()
+            if "wta" in name:
+                wta_dfs.append(df)
+            else:
+                atp_dfs.append(df)
+        except:
+            pass
+    atp = pd.concat(atp_dfs, ignore_index=True).sort_values("tourney_date") if atp_dfs else None
+    wta = pd.concat(wta_dfs, ignore_index=True).sort_values("tourney_date") if wta_dfs else None
+    return atp, wta
 
-@st.cache_data
-def load_dataset(path_str):
-    try:
-        return pd.read_csv(path_str, low_memory=False)
-    except Exception as e:
-        st.error(f"Impossible de lire {Path(path_str).name}: {e}")
-        return None
-
-@st.cache_data(ttl=600)
-def load_all_tennis_data():
-    datasets = list_available_datasets("Tennis")
-    if not datasets:
-        return None
-    dfs = []
-    for d in datasets:
-        df = load_dataset(d["path"])
-        if df is not None:
-            dfs.append(df)
-    if not dfs:
-        return None
-    combined = pd.concat(dfs, ignore_index=True)
-    combined["tourney_date"] = pd.to_datetime(
-        combined["tourney_date"], format="%Y%m%d", errors="coerce"
-    )
-    combined = combined.sort_values("tourney_date").reset_index(drop=True)
-    return combined
-
-# ────────────────────────────────────────────────
-# Stats avancées d'un joueur
-# ────────────────────────────────────────────────
-def get_advanced_stats(df, player, surface=None, n_stats=10, n_form=5, fatigue_days=7):
-    """Stats complètes : service + retour + forme + fatigue, filtrées par surface."""
-
+# ─────────────────────────────────────────────────────────────
+# FEATURES
+# ─────────────────────────────────────────────────────────────
+def get_player_stats(df, player, surface=None, n_stats=15, n_form=5, fatigue_days=7):
     as_w = df[df["winner_name"] == player].copy()
-    as_w["is_w"]    = True
-    as_w["ace"]     = as_w["w_ace"]
-    as_w["df_c"]    = as_w["w_df"]
-    as_w["svpt"]    = as_w["w_svpt"]
-    as_w["1stIn"]   = as_w["w_1stIn"]
-    as_w["1stWon"]  = as_w["w_1stWon"]
-    as_w["2ndWon"]  = as_w["w_2ndWon"]
-    as_w["bpS"]     = as_w["w_bpSaved"]
-    as_w["bpF"]     = as_w["w_bpFaced"]
-    as_w["rank"]    = as_w["winner_rank"]
-    as_w["rank_pts"]= as_w["winner_rank_points"]
-    as_w["age"]     = as_w["winner_age"]
-    as_w["opp_1stIn"]  = as_w["l_1stIn"]
-    as_w["opp_1stWon"] = as_w["l_1stWon"]
-    as_w["opp_2ndWon"] = as_w["l_2ndWon"]
+    as_w["is_w"]     = True
+    as_w["ace"]      = as_w["w_ace"];    as_w["df_c"]    = as_w["w_df"]
+    as_w["svpt"]     = as_w["w_svpt"];   as_w["1stIn"]   = as_w["w_1stIn"]
+    as_w["1stWon"]   = as_w["w_1stWon"]; as_w["2ndWon"]  = as_w["w_2ndWon"]
+    as_w["bpS"]      = as_w["w_bpSaved"];as_w["bpF"]     = as_w["w_bpFaced"]
+    as_w["rank"]     = as_w["winner_rank"]
+    as_w["rank_pts"] = as_w["winner_rank_points"]
+    as_w["age"]      = as_w["winner_age"]
+    as_w["o1stIn"]   = as_w["l_1stIn"];  as_w["o1stWon"] = as_w["l_1stWon"]
+    as_w["o2ndWon"]  = as_w["l_2ndWon"]
 
     as_l = df[df["loser_name"] == player].copy()
-    as_l["is_w"]    = False
-    as_l["ace"]     = as_l["l_ace"]
-    as_l["df_c"]    = as_l["l_df"]
-    as_l["svpt"]    = as_l["l_svpt"]
-    as_l["1stIn"]   = as_l["l_1stIn"]
-    as_l["1stWon"]  = as_l["l_1stWon"]
-    as_l["2ndWon"]  = as_l["l_2ndWon"]
-    as_l["bpS"]     = as_l["l_bpSaved"]
-    as_l["bpF"]     = as_l["l_bpFaced"]
-    as_l["rank"]    = as_l["loser_rank"]
-    as_l["rank_pts"]= as_l["loser_rank_points"]
-    as_l["age"]     = as_l["loser_age"]
-    as_l["opp_1stIn"]  = as_l["w_1stIn"]
-    as_l["opp_1stWon"] = as_l["w_1stWon"]
-    as_l["opp_2ndWon"] = as_l["w_2ndWon"]
+    as_l["is_w"]     = False
+    as_l["ace"]      = as_l["l_ace"];    as_l["df_c"]    = as_l["l_df"]
+    as_l["svpt"]     = as_l["l_svpt"];   as_l["1stIn"]   = as_l["l_1stIn"]
+    as_l["1stWon"]   = as_l["l_1stWon"]; as_l["2ndWon"]  = as_l["l_2ndWon"]
+    as_l["bpS"]      = as_l["l_bpSaved"];as_l["bpF"]     = as_l["l_bpFaced"]
+    as_l["rank"]     = as_l["loser_rank"]
+    as_l["rank_pts"] = as_l["loser_rank_points"]
+    as_l["age"]      = as_l["loser_age"]
+    as_l["o1stIn"]   = as_l["w_1stIn"];  as_l["o1stWon"] = as_l["w_1stWon"]
+    as_l["o2ndWon"]  = as_l["w_2ndWon"]
 
-    cols = ["tourney_date", "surface", "is_w", "ace", "df_c",
-            "svpt", "1stIn", "1stWon", "2ndWon", "bpS", "bpF",
-            "rank", "rank_pts", "age",
-            "opp_1stIn", "opp_1stWon", "opp_2ndWon"]
+    cols = ["tourney_date","surface","is_w","ace","df_c","svpt",
+            "1stIn","1stWon","2ndWon","bpS","bpF","rank","rank_pts","age",
+            "o1stIn","o1stWon","o2ndWon"]
 
     all_m = pd.concat([as_w[cols], as_l[cols]], ignore_index=True
                       ).sort_values("tourney_date", ascending=False)
-
     if all_m.empty:
         return None
 
-    # Forme sur N derniers matchs toutes surfaces
-    form_m    = all_m.head(n_form)
-    form_pct  = form_m["is_w"].sum() / len(form_m) if len(form_m) > 0 else 0.5
+    # Forme (N derniers matchs toutes surfaces)
+    form_m   = all_m.head(n_form)
+    form_pct = float(form_m["is_w"].sum() / len(form_m))
 
-    # Fatigue : matchs dans les X derniers jours
-    last_date = all_m["tourney_date"].iloc[0]
-    cutoff    = last_date - pd.Timedelta(days=fatigue_days)
-    fatigue   = (all_m["tourney_date"] >= cutoff).sum()
+    # Fatigue
+    last_d  = all_m["tourney_date"].iloc[0]
+    cutoff  = last_d - pd.Timedelta(days=fatigue_days)
+    fatigue = int((all_m["tourney_date"] >= cutoff).sum())
 
-    # Stats filtrées par surface
+    # Stats filtrées surface
     if surface:
-        surf_m = all_m[all_m["surface"] == surface].head(n_stats)
-        working = surf_m if len(surf_m) >= 3 else all_m.head(n_stats)
-        surf_note = "sur cette surface" if len(surf_m) >= 3 else "toutes surfaces (données insuffisantes)"
+        sm = all_m[all_m["surface"] == surface].head(n_stats)
+        working   = sm if len(sm) >= 3 else all_m.head(n_stats)
+        surf_note = "surface" if len(sm) >= 3 else "all surfaces"
     else:
         working   = all_m.head(n_stats)
-        surf_note = "toutes surfaces"
+        surf_note = "all surfaces"
 
-    # Infos de base
     rank     = all_m["rank"].dropna().iloc[0]     if not all_m["rank"].dropna().empty     else None
     rank_pts = all_m["rank_pts"].dropna().iloc[0] if not all_m["rank_pts"].dropna().empty else None
     age      = all_m["age"].dropna().iloc[0]      if not all_m["age"].dropna().empty      else None
 
-    def sp(num, den):
-        n = working[num].sum()
-        d = working[den].sum()
-        return float(n / d) if d > 0 else None
+    def sp(n, d):
+        tn = working[n].sum(); td = working[d].sum()
+        return float(tn/td) if td > 0 else None
 
-    ace_avg = float(working["ace"].mean()) if working["ace"].notna().any() else None
-    df_avg  = float(working["df_c"].mean()) if working["df_c"].notna().any() else None
+    svpt_s = working["svpt"].sum(); in1_s = working["1stIn"].sum()
+    won2_s = working["2ndWon"].sum()
+    pct_2nd = float(won2_s / (svpt_s - in1_s)) if (svpt_s - in1_s) > 0 else None
 
-    # % 2ème balle gagnée
-    svpt_sum  = working["svpt"].sum()
-    in1_sum   = working["1stIn"].sum()
-    won2_sum  = working["2ndWon"].sum()
-    pct_2nd   = float(won2_sum / (svpt_sum - in1_sum)) if (svpt_sum - in1_sum) > 0 else None
+    oi1s = working["o1stIn"].sum(); ow1s = working["o1stWon"].sum()
+    pct_ret_1st = float((oi1s - ow1s) / oi1s) if oi1s > 0 else None
 
-    # Stats retour : pts gagnés quand adversaire sert
-    opp_in1_sum  = working["opp_1stIn"].sum()
-    opp_won1_sum = working["opp_1stWon"].sum()
-    opp_won2_sum = working["opp_2ndWon"].sum()
-    pct_ret_1st = float((opp_in1_sum - opp_won1_sum) / opp_in1_sum) if opp_in1_sum > 0 else None
-
-    wins   = int(working["is_w"].sum())
-    played = len(working)
+    wins = int(working["is_w"].sum()); played = len(working)
 
     return {
         "rank": rank, "rank_pts": rank_pts, "age": age,
-        "form_pct":  form_pct,
-        "fatigue":   int(fatigue),
-        "ace_avg":   ace_avg,
-        "df_avg":    df_avg,
-        "pct_1st_in":   sp("1stIn", "svpt"),
-        "pct_1st_won":  sp("1stWon", "1stIn"),
-        "pct_2nd_won":  pct_2nd,
-        "pct_bp_saved": sp("bpS", "bpF"),
-        "pct_ret_1st":  pct_ret_1st,
-        "pct_ret_2nd":  float(opp_won2_sum / played) if played > 0 else None,
+        "form_pct": form_pct, "fatigue": fatigue,
+        "ace_avg": float(working["ace"].mean()) if working["ace"].notna().any() else None,
+        "df_avg":  float(working["df_c"].mean()) if working["df_c"].notna().any() else None,
+        "pct_1st_in":    sp("1stIn", "svpt"),
+        "pct_1st_won":   sp("1stWon", "1stIn"),
+        "pct_2nd_won":   pct_2nd,
+        "pct_bp_saved":  sp("bpS", "bpF"),
+        "pct_ret_1st":   pct_ret_1st,
+        "pct_ret_2nd":   float(working["o2ndWon"].mean()) if working["o2ndWon"].notna().any() else None,
         "wins": wins, "played": played,
-        "win_pct": wins / played if played > 0 else 0,
+        "win_pct": wins/played if played > 0 else 0,
         "surf_note": surf_note,
+        "last_date": all_m["tourney_date"].iloc[0],
     }
 
-# ────────────────────────────────────────────────
-# H2H
-# ────────────────────────────────────────────────
 def get_h2h(df, j1, j2, surface=None):
     mask = (
-        ((df["winner_name"] == j1) & (df["loser_name"] == j2)) |
-        ((df["winner_name"] == j2) & (df["loser_name"] == j1))
+        ((df["winner_name"]==j1)&(df["loser_name"]==j2)) |
+        ((df["winner_name"]==j2)&(df["loser_name"]==j1))
     )
     h2h = df[mask].copy()
-    h2h_surf = h2h[h2h["surface"] == surface] if surface else h2h
+    h2h_s = h2h[h2h["surface"]==surface] if surface else h2h
 
-    j1_tot  = int((h2h["winner_name"] == j1).sum())
-    j2_tot  = int((h2h["winner_name"] == j2).sum())
-    j1_surf = int((h2h_surf["winner_name"] == j1).sum()) if surface else None
-    j2_surf = int((h2h_surf["winner_name"] == j2).sum()) if surface else None
+    j1_tot  = int((h2h["winner_name"]==j1).sum())
+    j2_tot  = int((h2h["winner_name"]==j2).sum())
+    j1_surf = int((h2h_s["winner_name"]==j1).sum()) if surface else None
+    j2_surf = int((h2h_s["winner_name"]==j2).sum()) if surface else None
+    h2h_sc  = j1_tot/len(h2h) if len(h2h)>0 else 0.5
 
-    h2h_score = j1_tot / len(h2h) if len(h2h) > 0 else 0.5
-
-    recent = h2h.sort_values("tourney_date", ascending=False).head(5)[
-        ["tourney_date", "tourney_name", "surface", "round", "winner_name", "loser_name", "score"]
+    recent = h2h.sort_values("tourney_date",ascending=False).head(5)[
+        ["tourney_date","tourney_name","surface","round","winner_name","loser_name","score"]
     ].copy()
     recent["tourney_date"] = recent["tourney_date"].dt.strftime("%Y-%m-%d")
-
     return {
-        "total": len(h2h), "j1_tot": j1_tot, "j2_tot": j2_tot,
-        "j1_surf": j1_surf, "j2_surf": j2_surf,
-        "surf_total": len(h2h_surf),
-        "h2h_score": h2h_score,
-        "recent": recent,
+        "total":j1_tot+j2_tot,"j1_tot":j1_tot,"j2_tot":j2_tot,
+        "j1_surf":j1_surf,"j2_surf":j2_surf,"surf_total":len(h2h_s),
+        "h2h_score":h2h_sc,"recent":recent
     }
 
-# ────────────────────────────────────────────────
-# Score de confiance
-# ────────────────────────────────────────────────
 def confidence_score(proba, s1, s2, h2h):
     signals = []
-    pred_strength = abs(proba - 0.5) * 2
-    signals.append(("Force prédiction",    pred_strength * 35))
-    data_q = min(s1["played"], 15) / 15 * 0.5 + min(s2["played"], 15) / 15 * 0.5
-    signals.append(("Qualité des données", data_q * 25))
+    pred_s = abs(proba-0.5)*2
+    signals.append(("Prediction strength", pred_s*35))
+    dq = min(s1["played"],15)/15*0.5 + min(s2["played"],15)/15*0.5
+    signals.append(("Data quality",        dq*25))
     if h2h["total"] >= 2:
-        favori_h2h = h2h["h2h_score"] if proba >= 0.5 else (1 - h2h["h2h_score"])
-        signals.append(("Cohérence H2H",   favori_h2h * 25))
+        fav_h2h = h2h["h2h_score"] if proba>=0.5 else (1-h2h["h2h_score"])
+        signals.append(("H2H consistency",   fav_h2h*25))
     else:
-        signals.append(("Cohérence H2H",   12.5))
-    form_agree = 1.0 if (
-        (proba >= 0.5 and s1["form_pct"] >= s2["form_pct"]) or
-        (proba < 0.5  and s2["form_pct"] >= s1["form_pct"])
+        signals.append(("H2H consistency",   12.5))
+    form_ok = 1.0 if (
+        (proba>=0.5 and s1["form_pct"]>=s2["form_pct"]) or
+        (proba<0.5  and s2["form_pct"]>=s1["form_pct"])
     ) else 0.3
-    signals.append(("Cohérence forme récente", form_agree * 15))
-    total = sum(v for _, v in signals)
-    return round(min(total, 100)), signals
+    signals.append(("Recent form alignment", form_ok*15))
+    return round(min(sum(v for _,v in signals), 100)), signals
 
-# ────────────────────────────────────────────────
-# Interface
-# ────────────────────────────────────────────────
-st.set_page_config(page_title="Sports Betting NN", page_icon="🎾⚽🏀", layout="wide")
-st.title("Prédictions Paris Sportifs – Réseaux de Neurones")
+def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level):
+    def sd(k):
+        a, b = s1.get(k), s2.get(k)
+        if a is not None and b is not None and pd.notna(a) and pd.notna(b):
+            return float(a)-float(b)
+        return 0.0
+    level_gs   = int(level in ("G","Grand Slam"))
+    level_m    = int(level in ("M","Masters"))
+    level_500  = int(level in ("500","A"))
+    return [
+        sd("rank"), sd("rank_pts"), sd("age"),
+        sd("form_pct"), sd("fatigue"),
+        sd("ace_avg"), sd("df_avg"),
+        sd("pct_1st_in"), sd("pct_1st_won"), sd("pct_2nd_won"),
+        sd("pct_bp_saved"), sd("pct_ret_1st"), sd("pct_ret_2nd"),
+        float(h2h_sc), float(best_of),
+        int(surface=="Hard"), int(surface=="Clay"), int(surface=="Grass"),
+        level_gs, level_m, level_500,
+    ]
 
+# ─────────────────────────────────────────────────────────────
+# HELPERS HTML
+# ─────────────────────────────────────────────────────────────
+def surface_badge(surface):
+    s = surface.lower()
+    cls = {"hard":"badge-hard","clay":"badge-clay","grass":"badge-grass"}.get(s,"badge-hard")
+    return f'<span class="badge {cls}">{surface}</span>'
+
+def tour_badge(tour):
+    cls = "badge-atp" if tour=="ATP" else "badge-wta"
+    return f'<span class="badge {cls}">{tour}</span>'
+
+def level_badge(level):
+    labels = {"G":"Grand Slam","M":"Masters 1000","500":"ATP 500","A":"ATP","F":"Finals"}
+    label = labels.get(level, level)
+    if level == "G":
+        return f'<span class="badge badge-gs">{label}</span>'
+    return f'<span class="badge badge-hard">{label}</span>'
+
+def stat_html(key, val1, val2, higher_is_better=True):
+    if val1 is None or val2 is None:
+        v1_s, v2_s = "N/A", "N/A"
+        c1, c2 = "stat-val", "stat-val"
+    else:
+        if isinstance(val1, float) and val1 < 2:
+            v1_s = f"{val1:.1%}"
+            v2_s = f"{val2:.1%}"
+        else:
+            v1_s = f"{val1:.1f}" if isinstance(val1, float) else str(val1)
+            v2_s = f"{val2:.1f}" if isinstance(val2, float) else str(val2)
+        better = val1 > val2 if higher_is_better else val1 < val2
+        c1 = "stat-val-green" if better else "stat-val"
+        c2 = "stat-val-green" if not better else "stat-val"
+    return f"""
+    <div class="stat-row">
+        <span class="stat-val {c1}">{v1_s}</span>
+        <span class="stat-key">{key}</span>
+        <span class="stat-val {c2}">{v2_s}</span>
+    </div>"""
+
+# ─────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("Données détectées")
-    for sn in SPORT_CONFIG:
-        ds = list_available_datasets(sn)
-        st.write(f"{'✅' if ds else '⚠️'} **{sn}**: {len(ds)} fichier(s)")
-        if ds and st.checkbox(f"Détails {sn}", key=f"chk_{sn}"):
-            for d in ds[:6]:
-                st.caption(f"• {d['name']} ({d['size_kb']:.1f} KB)")
+    st.markdown("""
+    <div style="padding: 20px 0 10px 0;">
+        <div style="font-family:'Playfair Display',serif; font-size:1.4rem;
+                    font-weight:700; color:#3dd68c; letter-spacing:-0.5px;">
+            TennisIQ
+        </div>
+        <div style="font-size:0.68rem; color:#2a3e40; letter-spacing:3px;
+                    text-transform:uppercase; margin-top:2px;">
+            AI Prediction Engine
+        </div>
+    </div>
+    <div class="divider"></div>
+    """, unsafe_allow_html=True)
 
-    # Performances modèles tennis
-    meta = load_tennis_meta()
-    if meta:
-        st.markdown("---")
-        st.markdown("**🎾 Performances modèles**")
-        for surf, res in meta.get("results", {}).items():
-            st.caption(f"• {surf}: {res['accuracy']*100:.1f}% acc | AUC {res['auc']:.3f}")
-    st.markdown("---")
-    st.caption("src/data/raw/tml-tennis/ | models/")
+    atp_data, wta_data = load_all_data()
 
-col_left, _ = st.columns([1, 4])
-with col_left:
-    sport = st.selectbox("Sport", list(SPORT_CONFIG.keys()))
+    # Status données
+    atp_ok = atp_data is not None and len(atp_data) > 0
+    wta_ok = wta_data is not None and len(wta_data) > 0
 
-if sport:
-    cfg    = SPORT_CONFIG[sport]
-    tab_pred, tab_data, tab_info = st.tabs(["Prédiction", "Données", "Infos"])
+    st.markdown("**DATA STATUS**")
+    if atp_ok:
+        n_atp = len(atp_data)
+        y_min = atp_data["tourney_date"].min().year
+        y_max = atp_data["tourney_date"].max().year
+        st.markdown(f"""
+        <div class="card" style="padding:14px; margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="badge badge-atp">ATP</span>
+                <span style="color:#3dd68c; font-family:'Playfair Display',serif; font-weight:700;">✓</span>
+            </div>
+            <div style="margin-top:8px; font-size:0.85rem; color:#c8c0b0;">
+                {n_atp:,} matchs
+            </div>
+            <div style="font-size:0.72rem; color:#4a5e60; margin-top:2px;">
+                {y_min} — {y_max}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown('<div style="color:#e07878; font-size:0.8rem;">⚠ No ATP data found</div>', unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════════
-    # ONGLET PRÉDICTION TENNIS
-    # ══════════════════════════════════════════════
-    with tab_pred:
-        st.subheader(f"Prédiction – {sport}")
+    if wta_ok:
+        n_wta = len(wta_data)
+        y_min = wta_data["tourney_date"].min().year
+        y_max = wta_data["tourney_date"].max().year
+        st.markdown(f"""
+        <div class="card" style="padding:14px; margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="badge badge-wta">WTA</span>
+                <span style="color:#3dd68c; font-family:'Playfair Display',serif; font-weight:700;">✓</span>
+            </div>
+            <div style="margin-top:8px; font-size:0.85rem; color:#c8c0b0;">
+                {n_wta:,} matchs
+            </div>
+            <div style="font-size:0.72rem; color:#4a5e60; margin-top:2px;">
+                {y_min} — {y_max}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown('<div style="color:#e07878; font-size:0.8rem;">⚠ No WTA data found</div>', unsafe_allow_html=True)
 
-        if sport == "Tennis":
-            df_all = load_all_tennis_data()
+    # Modèles
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("**MODELS**")
+    meta = load_meta()
+    for tour_key in ["atp", "wta"]:
+        for surf in SURFACES:
+            mp = MODELS_DIR / f"tennis_model_{tour_key}_{surf.lower()}.h5"
+            ok = mp.exists()
+            acc_str = ""
+            if ok and meta:
+                res = meta.get("results", {}).get(f"{tour_key}_{surf}", {})
+                if res:
+                    acc_str = f" · {res.get('accuracy',0)*100:.0f}%"
+            color = "#3dd68c" if ok else "#2a3a3c"
+            icon  = "●" if ok else "○"
+            st.markdown(
+                f'<div style="font-size:0.78rem; color:{color}; '
+                f'padding:3px 0; letter-spacing:1px;">'
+                f'{icon} {tour_key.upper()} {surf}{acc_str}</div>',
+                unsafe_allow_html=True
+            )
 
-            if df_all is None:
-                st.error("Aucune donnée tennis trouvée dans src/data/raw/tml-tennis/")
-            else:
-                # Tournoi
-                st.markdown("### 🏆 Tournoi")
-                tournois = sorted(df_all["tourney_name"].dropna().unique())
-                selected_tournoi = st.selectbox("Sélectionner un tournoi", tournois)
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:0.65rem; color:#2a3e40; letter-spacing:2px; '
+        'text-transform:uppercase;">src/data/raw/tml-tennis/</div>',
+        unsafe_allow_html=True
+    )
 
-                df_t    = df_all[df_all["tourney_name"] == selected_tournoi]
-                surface = df_t["surface"].iloc[0]       if not df_t.empty else "Hard"
-                best_of = int(df_t["best_of"].iloc[0])  if not df_t.empty else 3
+# ─────────────────────────────────────────────────────────────
+# HEADER
+# ─────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="padding: 32px 0 24px 0;">
+    <p class="hero-title">TennisIQ</p>
+    <p class="hero-sub">Neural Network Prediction Engine · ATP & WTA</p>
+</div>
+<div class="divider"></div>
+""", unsafe_allow_html=True)
 
-                model  = load_tennis_model(surface)
-                scaler = load_tennis_scaler(surface)
+if not atp_ok and not wta_ok:
+    st.error("Aucune donnée trouvée dans `src/data/raw/tml-tennis/`. Vérifiez vos fichiers CSV.")
+    st.stop()
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("🎾 Surface", surface)
-                c2.metric("🔢 Format",  f"Best of {best_of}")
-                c3.metric("🤖 Modèle",  f"Tennis {surface}" if model else "❌ Non trouvé")
+# ─────────────────────────────────────────────────────────────
+# TABS
+# ─────────────────────────────────────────────────────────────
+tab_pred, tab_explore, tab_models = st.tabs([
+    "⚡  PREDICT",
+    "🔍  EXPLORE",
+    "📊  MODELS"
+])
 
-                if not model:
-                    st.warning(f"Modèle tennis_{surface.lower()}.h5 introuvable dans models/")
-                else:
-                    # Joueurs
-                    st.markdown("### 👤 Joueurs")
-                    all_players = sorted(pd.concat([
-                        df_all["winner_name"], df_all["loser_name"]
-                    ]).dropna().unique())
+# ══════════════════════════════════════════════════════════════
+# TAB 1 — PREDICT
+# ══════════════════════════════════════════════════════════════
+with tab_pred:
 
-                    cj1, cj2 = st.columns(2)
-                    with cj1:
-                        joueur1 = st.selectbox("Joueur 1", all_players, key="j1")
-                    with cj2:
-                        joueur2 = st.selectbox("Joueur 2",
-                            [p for p in all_players if p != joueur1], key="j2")
+    # ── Ligne 1 : Tour + Tournoi ──────────────────────────────
+    c1, c2 = st.columns([1, 3])
 
-                    n_matches = st.slider("Matchs récents à analyser", 5, 30, 10)
+    with c1:
+        tour = st.selectbox("Circuit", ["ATP", "WTA"], key="tour_sel")
 
-                    # Calcul stats + H2H
-                    s1  = get_advanced_stats(df_all, joueur1, surface, n_matches)
-                    s2  = get_advanced_stats(df_all, joueur2, surface, n_matches)
-                    h2h = get_h2h(df_all, joueur1, joueur2, surface)
+    df_active = atp_data if tour == "ATP" else wta_data
 
-                    # ── Stats ────────────────────
-                    st.markdown(f"### 📊 Stats récentes — {surface}")
-                    cs1, cs2 = st.columns(2)
+    if df_active is None:
+        st.warning(f"Données {tour} non disponibles.")
+        st.stop()
 
-                    def show_stats(col, name, s):
-                        with col:
-                            st.markdown(f"**{name}**")
-                            if s is None:
-                                st.warning("Aucune donnée")
-                                return
-                            st.caption(f"📌 {s['surf_note']} — {s['played']} matchs")
-                            st.metric("Classement",    f"#{int(s['rank'])}"    if s['rank']     else "N/A")
-                            st.metric("Points ATP",    f"{int(s['rank_pts'])}" if s['rank_pts'] else "N/A")
-                            st.metric("Âge",           f"{s['age']:.1f} ans"  if s['age']      else "N/A")
-                            st.metric("Forme récente", f"{s['form_pct']:.0%}")
-                            st.metric("Fatigue",       f"{s['fatigue']} matchs / 7j")
-                            st.metric("Victoires",     f"{s['wins']}/{s['played']} ({s['win_pct']:.0%})")
-                            st.markdown("**Service**")
-                            st.metric("Aces / match",  f"{s['ace_avg']:.1f}"      if s['ace_avg']      else "N/A")
-                            st.metric("DF / match",    f"{s['df_avg']:.1f}"       if s['df_avg']       else "N/A")
-                            st.metric("% 1ère entrée", f"{s['pct_1st_in']:.1%}"   if s['pct_1st_in']   else "N/A")
-                            st.metric("% 1ère gagnée", f"{s['pct_1st_won']:.1%}"  if s['pct_1st_won']  else "N/A")
-                            st.metric("% 2ème gagnée", f"{s['pct_2nd_won']:.1%}"  if s['pct_2nd_won']  else "N/A")
-                            st.metric("% BP sauvées",  f"{s['pct_bp_saved']:.1%}" if s['pct_bp_saved'] else "N/A")
-                            st.markdown("**Retour**")
-                            st.metric("% Ret 1ère",    f"{s['pct_ret_1st']:.1%}"  if s['pct_ret_1st']  else "N/A")
+    with c2:
+        tournois = sorted(df_active["tourney_name"].dropna().unique())
+        selected_tournoi = st.selectbox("Tournament", tournois, key="tourn_sel")
 
-                    show_stats(cs1, joueur1, s1)
-                    show_stats(cs2, joueur2, s2)
+    df_t    = df_active[df_active["tourney_name"] == selected_tournoi]
+    surface = df_t["surface"].iloc[0]     if not df_t.empty else "Hard"
+    best_of = int(df_t["best_of"].iloc[0]) if not df_t.empty else 3
+    level   = df_t["tourney_level"].iloc[0] if not df_t.empty and "tourney_level" in df_t.columns else "A"
 
-                    # ── H2H ──────────────────────
-                    st.markdown("### ⚔️ Historique H2H")
-                    if h2h["total"] == 0:
-                        st.info("Aucune confrontation directe dans les données.")
-                    else:
-                        ch1, ch2, ch3 = st.columns(3)
-                        ch1.metric("Total matchs",       h2h["total"])
-                        ch2.metric(f"Victoires {joueur1}", h2h["j1_tot"])
-                        ch3.metric(f"Victoires {joueur2}", h2h["j2_tot"])
-                        if h2h["surf_total"] > 0:
-                            st.caption(f"Sur {surface} : {joueur1} {h2h['j1_surf']}–{h2h['j2_surf']} {joueur2} ({h2h['surf_total']} matchs)")
-                        if not h2h["recent"].empty:
-                            with st.expander("📋 5 dernières confrontations"):
-                                st.dataframe(h2h["recent"].rename(columns={
-                                    "tourney_date": "Date", "tourney_name": "Tournoi",
-                                    "surface": "Surface", "round": "Tour",
-                                    "winner_name": "Vainqueur", "loser_name": "Perdant",
-                                    "score": "Score"
-                                }), use_container_width=True, hide_index=True)
+    # ── Infos tournoi ─────────────────────────────────────────
+    st.markdown(f"""
+    <div class="card" style="padding:16px 24px; margin: 12px 0;">
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+            {tour_badge(tour)}
+            {surface_badge(surface)}
+            {level_badge(str(level))}
+            <span style="font-size:0.78rem; color:#4a5e60; margin-left:4px;">
+                Best of {best_of}
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-                    # ── Prédiction ────────────────
-                    st.markdown("---")
-                    if st.button("🔮 Prédire le vainqueur", type="primary"):
-                        if s1 is None or s2 is None:
-                            st.error("Données insuffisantes pour un des joueurs.")
-                        else:
-                            def sd(a, b, k):
-                                va = a.get(k) if a else None
-                                vb = b.get(k) if b else None
-                                if va is not None and vb is not None and pd.notna(va) and pd.notna(vb):
-                                    return float(va) - float(vb)
-                                return 0.0
+    # ── Sélection joueurs ─────────────────────────────────────
+    all_players = sorted(pd.concat([
+        df_active["winner_name"], df_active["loser_name"]
+    ]).dropna().unique())
 
-                            fv = [
-                                sd(s1, s2, "rank"),
-                                sd(s1, s2, "rank_pts"),
-                                sd(s1, s2, "age"),
-                                sd(s1, s2, "form_pct"),
-                                sd(s1, s2, "fatigue"),
-                                sd(s1, s2, "ace_avg"),
-                                sd(s1, s2, "df_avg"),
-                                sd(s1, s2, "pct_1st_in"),
-                                sd(s1, s2, "pct_1st_won"),
-                                sd(s1, s2, "pct_2nd_won"),
-                                sd(s1, s2, "pct_bp_saved"),
-                                sd(s1, s2, "pct_ret_1st"),
-                                sd(s1, s2, "pct_ret_2nd"),
-                                h2h["h2h_score"],
-                                float(best_of),
-                                int(surface == "Hard"),
-                                int(surface == "Clay"),
-                                int(surface == "Grass"),
-                            ]
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-                            X = np.array(fv).reshape(1, -1)
-                            if scaler:
-                                X = scaler.transform(X)
+    pj1, pj2 = st.columns(2)
+    with pj1:
+        st.markdown('<div class="card-sub" style="margin-bottom:6px;">Player 1</div>', unsafe_allow_html=True)
+        joueur1 = st.selectbox("", all_players, key="j1", label_visibility="collapsed")
+    with pj2:
+        st.markdown('<div class="card-sub" style="margin-bottom:6px;">Player 2</div>', unsafe_allow_html=True)
+        joueur2 = st.selectbox("", [p for p in all_players if p != joueur1],
+                               key="j2", label_visibility="collapsed")
 
-                            with st.spinner("Prédiction en cours..."):
-                                proba = float(model.predict(X, verbose=0)[0][0])
+    # ── Paramètres analyse ───────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    pa1, pa2 = st.columns(2)
+    with pa1:
+        n_form = st.slider("Recent form matches", 3, 10, 5,
+                           help="5 is optimal — captures current momentum without noise.")
+    with pa2:
+        n_stats = st.slider("Stats window matches", 5, 30, 15,
+                            help="15-20 gives stable serve/return stats.")
 
-                            # Résultat
-                            st.markdown("## 🏆 Résultat")
-                            cr1, cr2 = st.columns(2)
-                            with cr1:
-                                st.metric(joueur1, f"{proba:.1%}")
-                                st.progress(proba)
-                            with cr2:
-                                st.metric(joueur2, f"{1-proba:.1%}")
-                                st.progress(1 - proba)
+    # ── Calcul stats ─────────────────────────────────────────
+    s1  = get_player_stats(df_active, joueur1, surface, n_stats, n_form)
+    s2  = get_player_stats(df_active, joueur2, surface, n_stats, n_form)
+    h2h = get_h2h(df_active, joueur1, joueur2, surface)
 
-                            if proba > 0.65:
-                                st.success(f"✅ **{joueur1}** favori selon le modèle")
-                            elif proba < 0.35:
-                                st.success(f"✅ **{joueur2}** favori selon le modèle")
-                            else:
-                                st.info("⚖️ Match très serré — faible confiance")
+    # ── Stats panel ──────────────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div class="card-title">Player Stats</div>
+        <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase;">
+            {surface} · last {n_stats} matches
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-                            # Score de confiance
-                            st.markdown("### 🎯 Score de confiance")
-                            conf, signals = confidence_score(proba, s1, s2, h2h)
-                            conf_color = "🟢" if conf >= 70 else "🟡" if conf >= 45 else "🔴"
-                            conf_label = "Élevée" if conf >= 70 else "Modérée" if conf >= 45 else "Faible"
-                            st.metric(f"{conf_color} Confiance {conf_label}", f"{conf} / 100")
-                            st.progress(conf / 100)
+    if s1 and s2:
+        # Header noms
+        hn1, hm, hn2 = st.columns([5, 2, 5])
+        with hn1:
+            st.markdown(f"""
+            <div class="card-title" style="font-size:1.3rem;">{joueur1}</div>
+            <div class="card-sub">{s1['surf_note']} · {s1['played']} matches</div>
+            """, unsafe_allow_html=True)
+        with hm:
+            st.markdown('<div style="text-align:center; color:#2a3e40; font-size:1.5rem; padding-top:8px;">VS</div>', unsafe_allow_html=True)
+        with hn2:
+            st.markdown(f"""
+            <div class="card-title" style="font-size:1.3rem; text-align:right;">{joueur2}</div>
+            <div class="card-sub" style="text-align:right;">{s2['surf_note']} · {s2['played']} matches</div>
+            """, unsafe_allow_html=True)
 
-                            with st.expander("🔍 Détail score de confiance"):
-                                maxs = [35, 25, 25, 15]
-                                for i, (label, val) in enumerate(signals):
-                                    st.write(f"**{label}** : {val:.1f} / {maxs[i]}")
-                                    st.progress(val / maxs[i])
+        # Stats comparées
+        st.markdown(f"""
+        <div class="card" style="margin-top:12px;">
+            {stat_html("RANKING", s1['rank'], s2['rank'], higher_is_better=False)}
+            {stat_html("ATP PTS", s1['rank_pts'], s2['rank_pts'])}
+            {stat_html("AGE", s1['age'], s2['age'], higher_is_better=False)}
+            {stat_html("FORM {0} MATCHES".format(n_form), s1['form_pct'], s2['form_pct'])}
+            {stat_html("FATIGUE (7d)", s1['fatigue'], s2['fatigue'], higher_is_better=False)}
+            {stat_html("ACES / MATCH", s1['ace_avg'], s2['ace_avg'])}
+            {stat_html("DBL FAULTS", s1['df_avg'], s2['df_avg'], higher_is_better=False)}
+            {stat_html("1ST SERVE IN", s1['pct_1st_in'], s2['pct_1st_in'])}
+            {stat_html("1ST SERVE WON", s1['pct_1st_won'], s2['pct_1st_won'])}
+            {stat_html("2ND SERVE WON", s1['pct_2nd_won'], s2['pct_2nd_won'])}
+            {stat_html("BP SAVED", s1['pct_bp_saved'], s2['pct_bp_saved'])}
+            {stat_html("RETURN 1ST WON", s1['pct_ret_1st'], s2['pct_ret_1st'])}
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("Insufficient data for one or both players.")
 
-                            with st.expander("🔬 Valeurs utilisées"):
-                                st.dataframe(pd.DataFrame({
-                                    "Feature": TENNIS_FEATURES,
-                                    "Valeur": fv
-                                }), hide_index=True)
+    # ── H2H ──────────────────────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    if h2h["total"] > 0:
+        st.markdown(f"""
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="text-align:center; flex:1;">
+                    <div style="font-family:'Playfair Display',serif; font-size:2.5rem;
+                                font-weight:900; color:#3dd68c;">{h2h['j1_tot']}</div>
+                    <div class="card-sub">{joueur1.split()[-1]}</div>
+                </div>
+                <div style="text-align:center; flex:0.6;">
+                    <div style="font-size:0.65rem; color:#2a3e40; letter-spacing:4px;
+                                text-transform:uppercase;">HEAD TO HEAD</div>
+                    <div style="font-size:0.7rem; color:#4a5e60; margin-top:4px;">
+                        {h2h['total']} matches total
+                    </div>
+                    {"<div style='font-size:0.68rem; color:#3a5040; margin-top:2px;'>"+str(h2h['j1_surf'])+"–"+str(h2h['j2_surf'])+" on "+surface+"</div>" if h2h['j1_surf'] is not None else ""}
+                </div>
+                <div style="text-align:center; flex:1;">
+                    <div style="font-family:'Playfair Display',serif; font-size:2.5rem;
+                                font-weight:900; color:#c8c0b0;">{h2h['j2_tot']}</div>
+                    <div class="card-sub">{joueur2.split()[-1]}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        # ── Football / Basketball ─────────────────
+        if not h2h["recent"].empty:
+            with st.expander("Last 5 encounters"):
+                st.dataframe(
+                    h2h["recent"].rename(columns={
+                        "tourney_date":"Date","tourney_name":"Tournament",
+                        "surface":"Surface","round":"Round",
+                        "winner_name":"Winner","loser_name":"Loser","score":"Score"
+                    }),
+                    use_container_width=True, hide_index=True
+                )
+    else:
+        st.markdown("""
+        <div class="card" style="text-align:center; padding:20px;">
+            <div style="color:#2a3e40; font-size:0.8rem; letter-spacing:2px; text-transform:uppercase;">
+                No previous encounters found
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── PREDICT BUTTON ────────────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    col_btn = st.columns([1, 2, 1])
+    with col_btn[1]:
+        predict_clicked = st.button("⚡  GENERATE PREDICTION", use_container_width=True)
+
+    if predict_clicked:
+        if s1 is None or s2 is None:
+            st.error("Insufficient data for prediction.")
         else:
-            model  = load_cached_model(sport)
-            scaler = load_cached_scaler(sport)
+            tour_key = tour.lower()
+            model  = load_model(tour_key, surface)
+            scaler = load_scaler(tour_key, surface)
+
             if not model:
-                st.warning(f"Modèle {sport} introuvable → {cfg.get('model_path', 'N/A')}")
+                st.warning(f"Model `tennis_model_{tour_key}_{surface.lower()}.h5` not found in models/. Run the training notebook first.")
             else:
-                st.success(f"✅ Modèle chargé")
-                user_values = {}
-                cols = st.columns(3)
-                for idx, feat in enumerate(cfg["features"]):
-                    with cols[idx % 3]:
-                        label = feat.replace("_", " ").title()
-                        if "odds" in feat or "cote" in feat:
-                            user_values[feat] = st.number_input(label, 1.01, 50.0, 2.0, 0.1)
-                        else:
-                            user_values[feat] = st.number_input(label, -100.0, 100.0, 0.0, 0.1)
-                if st.button("🔮 Prédire", type="primary"):
-                    try:
-                        X = np.array([user_values.get(f, 0.0) for f in cfg["features"]]).reshape(1, -1)
-                        if scaler:
-                            X = scaler.transform(X)
-                        proba = float(model.predict(X, verbose=0)[0][0])
-                        st.metric("Probabilité victoire", f"{proba:.1%}")
-                        st.progress(proba)
-                    except Exception as e:
-                        st.error(f"Erreur prédiction : {e}")
+                fv = build_feature_vector(s1, s2, h2h["h2h_score"], surface, best_of, str(level))
+                X  = np.array(fv).reshape(1, -1)
 
-    # ══════════════════════════════════════════════
-    # ONGLET DONNÉES
-    # ══════════════════════════════════════════════
-    with tab_data:
-        st.subheader(f"Données – {sport}")
-        datasets = list_available_datasets(sport)
-        if datasets:
-            st.dataframe(pd.DataFrame(datasets)[["name", "size_kb", "modified", "location"]])
-            selected = st.selectbox("Fichier à explorer", [d["name"] for d in datasets])
-            if selected:
-                file = next(d for d in datasets if d["name"] == selected)
-                df   = load_dataset(file["path"])
-                if df is not None:
-                    st.markdown(f"**{selected}** — {len(df):,} lignes, {len(df.columns)} colonnes")
-                    st.dataframe(df.head(15))
-                    with st.expander("Statistiques descriptives"):
-                        st.dataframe(df.describe())
-                    with st.expander("Colonnes"):
-                        st.write(list(df.columns))
+                if scaler:
+                    n_exp = getattr(scaler, "n_features_in_", None)
+                    if n_exp and n_exp == X.shape[1]:
+                        X = scaler.transform(X)
+                    else:
+                        st.caption(f"⚠ Scaler mismatch ({n_exp} vs {X.shape[1]}) — retrain model.")
+
+                with st.spinner(""):
+                    proba = float(model.predict(X, verbose=0)[0][0])
+
+                conf, signals = confidence_score(proba, s1, s2, h2h)
+
+                # ── Résultat visuel ───────────────────────────
+                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+                rr1, rr2 = st.columns(2)
+                with rr1:
+                    color1 = "#3dd68c" if proba >= 0.5 else "#2a3e40"
+                    st.markdown(f"""
+                    <div class="card" style="border-color:{color1}44; text-align:center; padding:32px 24px;">
+                        <div class="card-sub" style="margin-bottom:8px;">Player 1</div>
+                        <div class="card-title" style="font-size:1.5rem; margin-bottom:16px;">{joueur1}</div>
+                        <div class="proba-pct" style="color:{color1};">{proba:.1%}</div>
+                        <div class="bar-track" style="margin-top:16px;">
+                            <div class="{'bar-fill-green' if proba>=0.5 else 'bar-fill-dim'}"
+                                 style="width:{proba*100:.1f}%;"></div>
+                        </div>
+                        {"<div style='margin-top:12px; font-size:0.75rem; color:#3dd68c; letter-spacing:2px; text-transform:uppercase;'>FAVOURITE</div>" if proba>0.55 else ""}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with rr2:
+                    color2 = "#3dd68c" if proba < 0.5 else "#2a3e40"
+                    st.markdown(f"""
+                    <div class="card" style="border-color:{color2}44; text-align:center; padding:32px 24px;">
+                        <div class="card-sub" style="margin-bottom:8px;">Player 2</div>
+                        <div class="card-title" style="font-size:1.5rem; margin-bottom:16px;">{joueur2}</div>
+                        <div class="proba-pct" style="color:{color2};">{(1-proba):.1%}</div>
+                        <div class="bar-track" style="margin-top:16px;">
+                            <div class="{'bar-fill-green' if proba<0.5 else 'bar-fill-dim'}"
+                                 style="width:{(1-proba)*100:.1f}%;"></div>
+                        </div>
+                        {"<div style='margin-top:12px; font-size:0.75rem; color:#3dd68c; letter-spacing:2px; text-transform:uppercase;'>FAVOURITE</div>" if proba<0.45 else ""}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # ── Confidence score ──────────────────────────
+                conf_color = "#3dd68c" if conf>=70 else "#f5c842" if conf>=45 else "#e07878"
+                conf_label = "HIGH CONFIDENCE" if conf>=70 else "MODERATE" if conf>=45 else "LOW CONFIDENCE"
+
+                st.markdown(f"""
+                <div class="card" style="margin-top:16px; border-color:{conf_color}33;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+                        <div>
+                            <div class="card-sub">Confidence Score</div>
+                            <div class="conf-score" style="color:{conf_color};">{conf}</div>
+                            <div class="conf-label" style="color:{conf_color};">{conf_label}</div>
+                        </div>
+                        <div style="flex:1; min-width:200px;">
+                """, unsafe_allow_html=True)
+
+                maxs = [35, 25, 25, 15]
+                labels_fr = ["Prediction Strength", "Data Quality", "H2H Consistency", "Form Alignment"]
+                for i, (lbl, val) in enumerate(signals):
+                    pct = val/maxs[i]*100
+                    st.markdown(f"""
+                    <div style="margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+                            <span style="font-size:0.7rem; color:#4a5e60; text-transform:uppercase; letter-spacing:1.5px;">{labels_fr[i]}</span>
+                            <span style="font-size:0.7rem; color:#c8c0b0;">{val:.0f}/{maxs[i]}</span>
+                        </div>
+                        <div class="bar-track" style="height:4px;">
+                            <div style="width:{pct:.0f}%; height:100%; border-radius:2px;
+                                        background:linear-gradient(90deg,{conf_color}88,{conf_color});"></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("</div></div></div>", unsafe_allow_html=True)
+
+                # ── Feature vector debug ──────────────────────
+                with st.expander("Feature vector details"):
+                    st.dataframe(
+                        pd.DataFrame({"Feature": FEATURES, "Value": fv}),
+                        hide_index=True, use_container_width=True
+                    )
+
+# ══════════════════════════════════════════════════════════════
+# TAB 2 — EXPLORE
+# ══════════════════════════════════════════════════════════════
+with tab_explore:
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+
+    tour_exp = st.selectbox("Circuit", ["ATP","WTA"], key="tour_exp")
+    df_exp   = atp_data if tour_exp=="ATP" else wta_data
+
+    if df_exp is None:
+        st.warning(f"No {tour_exp} data available.")
+    else:
+        # Recherche joueur
+        all_pl = sorted(pd.concat([df_exp["winner_name"],df_exp["loser_name"]]).dropna().unique())
+        player_search = st.selectbox("Search player", all_pl, key="player_exp")
+
+        surf_filter = st.selectbox("Surface filter", ["All","Hard","Clay","Grass"], key="surf_exp")
+        surface_f   = None if surf_filter=="All" else surf_filter
+
+        s = get_player_stats(df_exp, player_search, surface_f, n_stats=20, n_form=10)
+
+        if s:
+            # Stats en grid
+            st.markdown(f"""
+            <div style="margin:20px 0 12px 0;">
+                <span class="card-title" style="font-size:1.6rem;">{player_search}</span>
+                <span style="margin-left:12px;">{surface_badge(surf_filter) if surf_filter else ""}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            g1, g2, g3, g4, g5 = st.columns(5)
+            g1.metric("Ranking",  f"#{int(s['rank'])}" if s['rank'] else "N/A")
+            g2.metric("Points",   f"{int(s['rank_pts'])}" if s['rank_pts'] else "N/A")
+            g3.metric("Age",      f"{s['age']:.1f}" if s['age'] else "N/A")
+            g4.metric("Win rate", f"{s['win_pct']:.0%}")
+            g5.metric("Fatigue",  f"{s['fatigue']}")
+
+            st.markdown(f"""
+            <div class="card" style="margin-top:16px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 32px;">
+                    <div>
+                        <div class="card-sub" style="padding:12px 0 6px 0;">SERVICE</div>
+                        {stat_html("ACES / MATCH", s['ace_avg'], None)}
+                        {stat_html("DBL FAULTS", s['df_avg'], None)}
+                        {stat_html("1ST SERVE IN %", s['pct_1st_in'], None)}
+                        {stat_html("1ST SERVE WON %", s['pct_1st_won'], None)}
+                        {stat_html("2ND SERVE WON %", s['pct_2nd_won'], None)}
+                        {stat_html("BREAK PTS SAVED %", s['pct_bp_saved'], None)}
+                    </div>
+                    <div>
+                        <div class="card-sub" style="padding:12px 0 6px 0;">RETURN</div>
+                        {stat_html("RETURN 1ST WON %", s['pct_ret_1st'], None)}
+                        {stat_html("RETURN 2ND WON %", s['pct_ret_2nd'], None)}
+                        <div class="card-sub" style="padding:12px 0 6px 0;">RECENT</div>
+                        {stat_html("FORM (last 10)", s['form_pct'], None)}
+                        {stat_html("W/L", f"{s['wins']}/{s['played']}", None)}
+                        {stat_html("LAST SEEN", s['last_date'].strftime('%Y-%m-%d') if s['last_date'] else "N/A", None)}
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Derniers matchs
+            mask = (df_exp["winner_name"]==player_search)|(df_exp["loser_name"]==player_search)
+            recent_m = df_exp[mask].sort_values("tourney_date",ascending=False).head(10)[[
+                "tourney_date","tourney_name","surface","round","winner_name","loser_name","score"
+            ]].copy()
+            recent_m["tourney_date"] = recent_m["tourney_date"].dt.strftime("%Y-%m-%d")
+            recent_m["result"] = recent_m["winner_name"].apply(
+                lambda w: "✓ Win" if w==player_search else "✗ Loss"
+            )
+
+            st.markdown('<div style="margin-top:20px;" class="card-sub">LAST 10 MATCHES</div>', unsafe_allow_html=True)
+            st.dataframe(
+                recent_m[["tourney_date","tourney_name","surface","round","result","score"]].rename(columns={
+                    "tourney_date":"Date","tourney_name":"Tournament",
+                    "surface":"Surface","round":"Round","result":"Result","score":"Score"
+                }),
+                use_container_width=True, hide_index=True
+            )
         else:
-            st.info("Aucune donnée trouvée. Placez vos CSV dans src/data/raw/tml-tennis/")
+            st.info("No data found for this player.")
 
-    # ══════════════════════════════════════════════
-    # ONGLET INFOS
-    # ══════════════════════════════════════════════
-    with tab_info:
-        st.subheader("Informations techniques")
-        meta = load_tennis_meta() if sport == "Tennis" else None
+# ══════════════════════════════════════════════════════════════
+# TAB 3 — MODELS INFO
+# ══════════════════════════════════════════════════════════════
+with tab_models:
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+    meta = load_meta()
 
-        if sport == "Tennis":
-            st.markdown("**3 modèles spécialisés par surface :**")
-            for surf in ["Hard", "Clay", "Grass"]:
-                m_path = MODELS_DIR / f"tennis_model_{surf.lower()}.h5"
-                s_path = MODELS_DIR / f"tennis_scaler_{surf.lower()}.joblib"
-                m_ok   = "✅" if m_path.exists() else "❌"
-                s_ok   = "✅" if s_path.exists() else "❌"
-                st.markdown(f"- **{surf}** : modèle {m_ok}  scaler {s_ok}")
+    st.markdown("""
+    <div class="card-title" style="font-size:1.4rem; margin-bottom:4px;">Model Architecture</div>
+    <div class="card-sub" style="margin-bottom:20px;">6 specialized neural networks — ATP & WTA × Hard/Clay/Grass</div>
+    """, unsafe_allow_html=True)
+
+    # Grid modèles
+    for tour_k in ["atp","wta"]:
+        st.markdown(f"""
+        <div style="margin:16px 0 8px 0;">
+            {tour_badge(tour_k.upper())}
+        </div>
+        """, unsafe_allow_html=True)
+
+        cols = st.columns(3)
+        for i, surf in enumerate(SURFACES):
+            mp = MODELS_DIR / f"tennis_model_{tour_k}_{surf.lower()}.h5"
+            sp = MODELS_DIR / f"tennis_scaler_{tour_k}_{surf.lower()}.joblib"
+            ok = mp.exists()
+            res = {}
             if meta:
-                st.markdown("**Performances :**")
-                for surf, res in meta.get("results", {}).items():
-                    st.markdown(f"- {surf}: `{res['accuracy']*100:.1f}%` accuracy | AUC `{res['auc']:.4f}`")
-            st.markdown(f"**{len(TENNIS_FEATURES)} features :**")
-            for f in TENNIS_FEATURES:
-                st.markdown(f"- `{f}`")
-        else:
-            st.markdown("**Features :**")
-            for f in cfg["features"]:
-                st.markdown(f"- `{f}`")
+                res = meta.get("results",{}).get(f"{tour_k}_{surf}",{})
 
-        st.markdown("**Chemins :**")
-        st.code(f"RAW    : {DATA_RAW_DIR}\nMODELS : {MODELS_DIR}")
+            with cols[i]:
+                status_color = "#3dd68c" if ok else "#2a3e40"
+                status_text  = "READY" if ok else "NOT TRAINED"
+                acc_str = f"{res.get('accuracy',0)*100:.1f}%" if res else "—"
+                auc_str = f"{res.get('auc',0):.4f}"          if res else "—"
+                last_ft = res.get('last_finetuned','—')       if res else "—"
 
-st.markdown("---")
-st.caption("Projet éducatif – Pas de garantie de gain – Jouez responsablement")
+                st.markdown(f"""
+                <div class="card" style="border-color:{status_color}33;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        {surface_badge(surf)}
+                        <span style="font-size:0.65rem; color:{status_color}; letter-spacing:2px; text-transform:uppercase;">{status_text}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-key">ACCURACY</span>
+                        <span class="stat-val" style="color:{status_color};">{acc_str}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-key">AUC</span>
+                        <span class="stat-val">{auc_str}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-key">SCALER</span>
+                        <span class="stat-val">{"✓" if sp.exists() else "✗"}</span>
+                    </div>
+                    <div class="stat-row" style="border:none;">
+                        <span class="stat-key">LAST UPDATE</span>
+                        <span class="stat-val" style="font-size:0.75rem;">{last_ft}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # Features
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="card-title" style="margin-bottom:12px;">Feature Engineering ({len(FEATURES)} features)</div>
+    """, unsafe_allow_html=True)
+
+    feat_groups = {
+        "Ranking & Profile":    ["rank_diff","pts_diff","age_diff"],
+        "Recent Form":          ["form_diff","fatigue_diff"],
+        "Serve":                ["ace_diff","df_diff","pct_1st_in_diff","pct_1st_won_diff","pct_2nd_won_diff","pct_bp_saved_diff"],
+        "Return":               ["pct_ret_1st_diff","pct_ret_2nd_diff"],
+        "H2H & Context":        ["h2h_score","best_of","surface_hard","surface_clay","surface_grass","level_gs","level_m1000","level_500"],
+    }
+
+    for grp, feats in feat_groups.items():
+        st.markdown(f'<div class="card-sub" style="margin:10px 0 4px 0;">{grp}</div>', unsafe_allow_html=True)
+        feat_html = " ".join([f'<span class="badge badge-hard" style="margin:2px;">{f}</span>' for f in feats])
+        st.markdown(f'<div style="display:flex; flex-wrap:wrap; gap:4px;">{feat_html}</div>', unsafe_allow_html=True)
+
+    if meta:
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        last_upd = meta.get("last_update","—")
+        n_used   = meta.get("total_matches_used", "—")
+        st.markdown(f"""
+        <div class="card" style="padding:14px 20px;">
+            <div style="display:flex; gap:32px; flex-wrap:wrap;">
+                <div><div class="card-sub">Last training</div><div style="color:#c8c0b0; margin-top:4px;">{last_upd}</div></div>
+                <div><div class="card-sub">Matches used</div><div style="color:#c8c0b0; margin-top:4px;">{str(n_used)}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+# FOOTER
+# ─────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="footer-custom">
+    TennisIQ · Educational Project · No Guarantee of Profit · Play Responsibly
+</div>
+""", unsafe_allow_html=True)
