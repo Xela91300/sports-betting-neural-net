@@ -371,17 +371,44 @@ def load_meta():
 # ─────────────────────────────────────────────────────────────
 # CHARGEMENT DONNÉES
 # ─────────────────────────────────────────────────────────────
-REQUIRED_COLS = {
-    "tourney_date", "surface", "winner_name", "loser_name",
-    "winner_rank", "loser_rank", "winner_rank_points", "loser_rank_points"
+# Mapping colonnes tennis-data.co.uk → format Jeff Sackmann
+TENNIS_DATA_MAP = {
+    "Date": "tourney_date", "Tournament": "tourney_name",
+    "Surface": "surface", "Series": "tourney_level", "Tier": "tourney_level",
+    "Court": "indoor", "Round": "round", "Best of": "best_of", "BestOf": "best_of",
+    "Winner": "winner_name", "Loser": "loser_name",
+    "WRank": "winner_rank", "LRank": "loser_rank",
+    "WPts": "winner_rank_points", "LPts": "loser_rank_points",
+    "WAce": "w_ace", "LAce": "l_ace", "WDF": "w_df", "LDF": "l_df",
+    "WBpFaced": "w_bpFaced", "LBpFaced": "l_bpFaced",
+    "WBpSaved": "w_bpSaved", "LBpSaved": "l_bpSaved",
+    "Score": "score",
 }
 
+REQUIRED_COLS = {
+    "tourney_date", "surface", "winner_name", "loser_name",
+    "winner_rank", "loser_rank"
+}
+
+def normalize_surface(s):
+    if pd.isna(s): return None
+    s = str(s).strip().lower()
+    if s in ("hard", "hardcourt", "hard (i)", "hard (o)"): return "Hard"
+    if s in ("clay", "terre battue"):                       return "Clay"
+    if s in ("grass", "gazon"):                             return "Grass"
+    return s.capitalize()
+
+def parse_date_flexible(series):
+    result = pd.to_datetime(series, format="%Y%m%d", errors="coerce")
+    mask = result.isna()
+    if mask.any():
+        result[mask] = pd.to_datetime(series[mask], format="%d/%m/%Y", errors="coerce")
+    mask = result.isna()
+    if mask.any():
+        result[mask] = pd.to_datetime(series[mask], infer_datetime_format=True, errors="coerce")
+    return result
+
 def read_csv_robust(filepath):
-    """
-    Lit un CSV en essayant plusieurs encodages.
-    Gère les noms avec accents/caractères spéciaux (ñ, ü, č...)
-    fréquents dans les données WTA.
-    """
     for enc in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
         try:
             return pd.read_csv(filepath, low_memory=False,
@@ -390,6 +417,22 @@ def read_csv_robust(filepath):
             continue
     return pd.read_csv(filepath, low_memory=False, encoding="latin-1",
                        on_bad_lines="skip", encoding_errors="replace")
+
+def apply_column_mapping(df):
+    cols = set(df.columns)
+    if "Winner" in cols or "Date" in cols:
+        rename = {k: v for k, v in TENNIS_DATA_MAP.items() if k in cols}
+        df = df.rename(columns=rename)
+        for col, default in [("winner_rank_points", np.nan), ("loser_rank_points", np.nan),
+                              ("winner_age", np.nan), ("loser_age", np.nan), ("best_of", 3)]:
+            if col not in df.columns:
+                df[col] = default
+        for col in ["w_ace","w_df","w_svpt","w_1stIn","w_1stWon","w_2ndWon",
+                    "w_bpSaved","w_bpFaced","l_ace","l_df","l_svpt",
+                    "l_1stIn","l_1stWon","l_2ndWon","l_bpSaved","l_bpFaced"]:
+            if col not in df.columns:
+                df[col] = np.nan
+    return df
 
 @st.cache_data(ttl=600)
 def load_all_data():
@@ -400,14 +443,13 @@ def load_all_data():
     for f in csvs:
         try:
             df = read_csv_robust(f)
-            # Vérifier que les colonnes essentielles sont présentes
+            df = apply_column_mapping(df)
             missing = REQUIRED_COLS - set(df.columns)
             if missing:
-                continue  # Fichier mal formaté, on l'ignore silencieusement
-            df["tourney_date"] = pd.to_datetime(
-                df["tourney_date"], format="%Y%m%d", errors="coerce"
-            )
-            df = df[df["tourney_date"].notna()]  # Supprimer les dates invalides
+                continue
+            df["surface"] = df["surface"].apply(normalize_surface)
+            df["tourney_date"] = parse_date_flexible(df["tourney_date"].astype(str))
+            df = df[df["tourney_date"].notna()]
             if "wta" in f.name.lower():
                 wta_dfs.append(df)
             else:
