@@ -983,7 +983,7 @@ with tab_pred:
                         "tourney_date":"Date","tourney_name":"Tournament",
                         "surface":"Surface","round":"Round",
                         "winner_name":"Winner","loser_name":"Loser","score":"Score"
-                    }),
+                    }).dropna(axis=1, how="all"),
                     use_container_width=True, hide_index=True
                 )
     else:
@@ -1178,20 +1178,22 @@ with tab_explore:
 
             # Derniers matchs
             mask = (df_exp["winner_name"]==player_search)|(df_exp["loser_name"]==player_search)
-            recent_m = df_exp[mask].sort_values("tourney_date",ascending=False).head(10)[[
-                "tourney_date","tourney_name","surface","round","winner_name","loser_name","score"
-            ]].copy()
+            cols_want = ["tourney_date","tourney_name","surface","round","winner_name","loser_name","score"]
+            cols_ok   = [c for c in cols_want if c in df_exp.columns]
+            recent_m  = df_exp[mask].sort_values("tourney_date",ascending=False).head(10)[cols_ok].copy()
             recent_m["tourney_date"] = recent_m["tourney_date"].dt.strftime("%Y-%m-%d")
             recent_m["result"] = recent_m["winner_name"].apply(
                 lambda w: "✓ Win" if w==player_search else "✗ Loss"
             )
 
+            # Colonnes display : uniquement celles disponibles
+            display_cols = [c for c in ["tourney_date","tourney_name","surface","round","result","score"] if c in recent_m.columns or c == "result"]
+            rename_map = {"tourney_date":"Date","tourney_name":"Tournament",
+                          "surface":"Surface","round":"Round","result":"Result","score":"Score"}
+
             st.markdown('<div style="margin-top:20px;" class="card-sub">LAST 10 MATCHES</div>', unsafe_allow_html=True)
             st.dataframe(
-                recent_m[["tourney_date","tourney_name","surface","round","result","score"]].rename(columns={
-                    "tourney_date":"Date","tourney_name":"Tournament",
-                    "surface":"Surface","round":"Round","result":"Result","score":"Score"
-                }),
+                recent_m[[c for c in display_cols if c in recent_m.columns]].rename(columns=rename_map),
                 use_container_width=True, hide_index=True
             )
         else:
