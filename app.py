@@ -4,6 +4,11 @@ import pandas as pd
 from pathlib import Path
 import joblib
 import json
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -27,6 +32,7 @@ FEATURES = [
 
 SURFACES  = ["Hard", "Clay", "Grass"]
 TOURS     = {"ATP": "atp", "WTA": "wta"}
+ATP_ONLY  = True   # Mettre False pour réactiver WTA
 
 # ─────────────────────────────────────────────────────────────
 # CSS — Dark Luxury Tennis
@@ -640,6 +646,83 @@ def confidence_score(proba, s1, s2, h2h):
     signals.append(("Recent form alignment", form_ok*15))
     return round(min(sum(v for _,v in signals), 100)), signals
 
+# ─────────────────────────────────────────────────────────────
+# ANALYSE CLAUDE AI
+# ─────────────────────────────────────────────────────────────
+def build_ai_prompt(j1, j2, s1, s2, h2h, surface, level, proba, tour):
+    """Construit le prompt pour l'analyse contextuelle Claude."""
+    fav   = j1 if proba >= 0.5 else j2
+    dog   = j2 if proba >= 0.5 else j1
+    sf, sd = (s1, s2) if proba >= 0.5 else (s2, s1)
+
+    level_labels = {"G":"Grand Chelem","M":"Masters 1000","500":"ATP 500","A":"ATP Tour","D":"Davis Cup","F":"ATP Finals"}
+    level_str = level_labels.get(str(level), str(level))
+
+    h2h_str = f"{h2h['j1_tot']}-{h2h['j2_tot']} en faveur de {j1}" if h2h['total'] > 0 else "Pas de confrontation directe"
+
+    def fmt(v, pct=False):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return "N/A"
+        return f"{v:.1%}" if pct else f"{v:.1f}"
+
+    prompt = f"""Tu es un expert analyste tennis. Analyse ce match ATP et fournis une analyse concise et pertinente.
+
+MATCH : {j1} vs {j2}
+Tournoi : {level_str} | Surface : {surface} | {tour}
+Prédiction modèle IA : {j1} {proba:.1%} — {j2} {1-proba:.1%}
+
+STATS {j1} (favori prédit : {proba>=0.5}):
+- Classement : #{int(sf['rank']) if sf['rank'] and not pd.isna(sf['rank']) else 'N/A'}
+- Forme récente : {fmt(sf['form_pct'], True)} de victoires
+- Fatigue (7j) : {sf['fatigue']} matchs
+- 1ère balle in : {fmt(sf['pct_1st_in'], True)} | gagnée : {fmt(sf['pct_1st_won'], True)}
+- 2ème balle gagnée : {fmt(sf['pct_2nd_won'], True)}
+- Break pts sauvés : {fmt(sf['pct_bp_saved'], True)}
+- Retour 1ère : {fmt(sf['pct_ret_1st'], True)}
+- Aces/match : {fmt(sf['ace_avg'])} | DFs : {fmt(sf['df_avg'])}
+
+STATS {j2} :
+- Classement : #{int(sd['rank']) if sd['rank'] and not pd.isna(sd['rank']) else 'N/A'}
+- Forme récente : {fmt(sd['form_pct'], True)} de victoires
+- Fatigue (7j) : {sd['fatigue']} matchs
+- 1ère balle in : {fmt(sd['pct_1st_in'], True)} | gagnée : {fmt(sd['pct_1st_won'], True)}
+- 2ème balle gagnée : {fmt(sd['pct_2nd_won'], True)}
+- Break pts sauvés : {fmt(sd['pct_bp_saved'], True)}
+- Retour 1ère : {fmt(sd['pct_ret_1st'], True)}
+- Aces/match : {fmt(sd['ace_avg'])} | DFs : {fmt(sd['df_avg'])}
+
+H2H : {h2h_str}
+
+Fournis une analyse structurée en 3 parties COURTES (max 3 phrases chacune) :
+
+**AVANTAGES DE {fav}**
+[Points forts qui justifient la prédiction]
+
+**RISQUES / POINTS FAIBLES**
+[Ce qui pourrait faire basculer le match en faveur de {dog}]
+
+**VERDICT**
+[Conclusion synthétique avec niveau de confiance et facteur décisif du match]
+
+Sois précis, factuel, basé uniquement sur les stats fournies. Pas de spéculations hors données."""
+
+    return prompt
+
+def get_claude_analysis(j1, j2, s1, s2, h2h, surface, level, proba, tour):
+    """Appelle l'API Claude pour une analyse textuelle du match."""
+    if not ANTHROPIC_AVAILABLE:
+        return None
+    try:
+        client  = anthropic.Anthropic()
+        prompt  = build_ai_prompt(j1, j2, s1, s2, h2h, surface, level, proba, tour)
+        message = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.content[0].text
+    except Exception as e:
+        return f"Analyse IA indisponible : {e}"
+
 def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level, n_features=21):
     """
     Génère le vecteur de features.
@@ -824,8 +907,9 @@ if not atp_ok and not wta_ok:
 # ─────────────────────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────────────────────
-tab_pred, tab_explore, tab_models = st.tabs([
+tab_pred, tab_multi, tab_explore, tab_models = st.tabs([
     "⚡  PREDICT",
+    "📋  MULTI-MATCH",
     "🔍  EXPLORE",
     "📊  MODELS"
 ])
@@ -839,7 +923,8 @@ with tab_pred:
     c1, c2 = st.columns([1, 3])
 
     with c1:
-        tour = st.selectbox("Circuit", ["ATP", "WTA"], key="tour_sel")
+        tour_options = ["ATP"] if ATP_ONLY else ["ATP", "WTA"]
+        tour = st.selectbox("Circuit", tour_options, key="tour_sel")
 
     df_active = atp_data if tour == "ATP" else wta_data
 
@@ -1113,6 +1198,249 @@ with tab_pred:
                         pd.DataFrame({"Feature": FEATURES[:len(fv)], "Value": fv}),
                         hide_index=True, use_container_width=True
                     )
+
+                # ── Analyse Claude AI ─────────────────────────
+                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                st.markdown("""
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+                    <div style="font-family:'Playfair Display',serif; font-size:1.2rem;
+                                font-weight:700; color:#e8e0d0;">AI Match Analysis</div>
+                    <div style="font-size:0.65rem; color:#3dd68c; letter-spacing:3px;
+                                text-transform:uppercase; border:1px solid #3dd68c44;
+                                padding:3px 10px; border-radius:20px;">Claude AI</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if ANTHROPIC_AVAILABLE:
+                    with st.spinner("Analyse en cours..."):
+                        ai_analysis = get_claude_analysis(
+                            joueur1, joueur2, s1, s2, h2h,
+                            surface, level, proba, tour
+                        )
+                    if ai_analysis:
+                        # Afficher l'analyse dans une card stylée
+                        # Convertir **text** en HTML bold
+                        import re
+                        ai_html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#e8e0d0;"></strong>', ai_analysis)
+                        ai_html = ai_html.replace('\n', '<br>')
+                        st.markdown(f"""
+                        <div class="card" style="border-color:#3dd68c22; padding:28px;">
+                            <div style="font-family:'DM Sans',sans-serif; font-size:0.92rem;
+                                        line-height:1.8; color:#a0b0b2;">
+                                {ai_html}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div class="card" style="border-color:#2a3e4044; padding:20px; text-align:center;">
+                        <div style="color:#4a5e60; font-size:0.8rem; letter-spacing:2px; text-transform:uppercase;">
+                            AI Analysis unavailable — install <code>anthropic</code> package
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# TAB 2 — MULTI-MATCH
+# ══════════════════════════════════════════════════════════════
+with tab_multi:
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="margin-bottom:24px;">
+        <div class="card-title" style="margin-bottom:8px;">Multi-Match Analysis</div>
+        <div style="font-size:0.82rem; color:#4a5e60; letter-spacing:1px;">
+            Analyse plusieurs matchs simultanément. Saisissez chaque match sur une ligne :
+            <code style="color:#3dd68c; background:#0d1516; padding:2px 8px; border-radius:4px;">
+            Joueur1 vs Joueur2
+            </code>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Config globale ────────────────────────────────────────
+    mm_c1, mm_c2, mm_c3 = st.columns(3)
+    with mm_c1:
+        mm_surface = st.selectbox("Surface", SURFACES, key="mm_surface")
+    with mm_c2:
+        mm_level = st.selectbox("Niveau", ["A","G","M","500","F"], key="mm_level",
+                                format_func=lambda x: {"G":"Grand Chelem","M":"Masters 1000",
+                                                       "500":"ATP 500","A":"ATP Tour","F":"Finals"}.get(x,x))
+    with mm_c3:
+        mm_best_of = st.selectbox("Best of", [3, 5], key="mm_best_of")
+
+    # ── Saisie des matchs ─────────────────────────────────────
+    st.markdown('<div style="margin-top:16px; margin-bottom:8px; font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase;">Matchs à analyser</div>', unsafe_allow_html=True)
+
+    matchs_input = st.text_area(
+        label="",
+        placeholder="Djokovic N. vs Alcaraz C.\nSinner J. vs Zverev A.\nMedvedev D. vs Tsitsipas S.",
+        height=160,
+        key="mm_input",
+        label_visibility="collapsed"
+    )
+
+    mm_ai = st.checkbox("Inclure l'analyse Claude AI pour chaque match", value=True, key="mm_ai")
+
+    col_btn_mm = st.columns([1, 2, 1])
+    with col_btn_mm[1]:
+        mm_clicked = st.button("⚡  ANALYSER TOUS LES MATCHS", use_container_width=True, key="mm_btn")
+
+    if mm_clicked:
+        if not matchs_input.strip():
+            st.warning("Saisir au moins un match.")
+        elif atp_data is None:
+            st.error("Données ATP non disponibles.")
+        else:
+            # Parser les lignes
+            lines = [l.strip() for l in matchs_input.strip().splitlines() if l.strip()]
+            matchs_parsed = []
+            for line in lines:
+                # Accepter "A vs B", "A v B", "A - B"
+                import re as _re
+                m = _re.split(r'\s+(?:vs\.?|v\.?|-)\s+', line, flags=_re.IGNORECASE)
+                if len(m) == 2:
+                    matchs_parsed.append((m[0].strip(), m[1].strip()))
+                else:
+                    st.caption(f"⚠️ Ligne ignorée (format invalide) : `{line}`")
+
+            if not matchs_parsed:
+                st.error("Aucun match valide détecté. Format : `Joueur1 vs Joueur2`")
+            else:
+                st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:16px;">{len(matchs_parsed)} match(s) analysé(s)</div>', unsafe_allow_html=True)
+
+                model_mm  = load_model("atp", mm_surface)
+                scaler_mm = load_scaler("atp", mm_surface)
+
+                if not model_mm:
+                    st.error(f"Modèle ATP {mm_surface} introuvable.")
+                else:
+                    try:
+                        n_model_mm = model_mm.input_shape[-1]
+                    except Exception:
+                        n_model_mm = 21
+
+                    for idx_m, (j1, j2) in enumerate(matchs_parsed):
+                        s1_mm = get_player_stats(atp_data, j1, mm_surface)
+                        s2_mm = get_player_stats(atp_data, j2, mm_surface)
+                        h2h_mm = get_h2h(atp_data, j1, j2, mm_surface)
+
+                        with st.container():
+                            # Header du match
+                            st.markdown(f"""
+                            <div class="card" style="margin-bottom:8px; padding:20px 24px;">
+                                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+                                    <div style="font-family:'Playfair Display',serif; font-size:1.1rem; font-weight:700; color:#e8e0d0;">
+                                        {j1} <span style="color:#3dd68c; margin:0 12px;">vs</span> {j2}
+                                    </div>
+                                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                        {surface_badge(mm_surface)}
+                                        {level_badge(mm_level)}
+                                        <span class="badge badge-atp">ATP</span>
+                                    </div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            if s1_mm is None or s2_mm is None:
+                                missing = j1 if s1_mm is None else j2
+                                st.markdown(f'<div style="color:#e07878; font-size:0.82rem; padding:8px 0 16px 0;">⚠️ Joueur introuvable dans les données : <strong>{missing}</strong></div>', unsafe_allow_html=True)
+                                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                                continue
+
+                            # Prédiction
+                            fv_mm = build_feature_vector(s1_mm, s2_mm, h2h_mm["h2h_score"],
+                                                         mm_surface, float(mm_best_of), mm_level,
+                                                         n_features=n_model_mm)
+                            X_mm = np.array(fv_mm).reshape(1, -1)
+
+                            if scaler_mm:
+                                n_exp_mm = getattr(scaler_mm, "n_features_in_", None)
+                                if n_exp_mm == X_mm.shape[1]:
+                                    X_mm = scaler_mm.transform(X_mm)
+
+                            proba_mm = float(model_mm.predict(X_mm, verbose=0)[0][0])
+                            conf_mm, _ = confidence_score(proba_mm, s1_mm, s2_mm, h2h_mm)
+
+                            fav_mm  = j1 if proba_mm >= 0.5 else j2
+                            pct_fav = proba_mm if proba_mm >= 0.5 else 1 - proba_mm
+                            pct_dog = 1 - pct_fav
+
+                            conf_color_mm = "#3dd68c" if conf_mm>=70 else "#f5c842" if conf_mm>=45 else "#e07878"
+                            conf_label_mm = "HIGH" if conf_mm>=70 else "MODERATE" if conf_mm>=45 else "LOW"
+
+                            # Résultat compact
+                            rc1, rc2, rc3, rc4 = st.columns([3, 3, 2, 2])
+                            with rc1:
+                                c1_color = "#3dd68c" if proba_mm >= 0.5 else "#4a5e60"
+                                st.markdown(f"""
+                                <div style="text-align:center; padding:12px;">
+                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Joueur 1</div>
+                                    <div style="font-size:0.92rem; color:#e8e0d0; font-weight:600; margin-bottom:6px;">{j1}</div>
+                                    <div style="font-size:1.4rem; font-weight:700; color:{c1_color}; font-family:'Playfair Display',serif;">{proba_mm:.1%}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with rc2:
+                                c2_color = "#3dd68c" if proba_mm < 0.5 else "#4a5e60"
+                                st.markdown(f"""
+                                <div style="text-align:center; padding:12px;">
+                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Joueur 2</div>
+                                    <div style="font-size:0.92rem; color:#e8e0d0; font-weight:600; margin-bottom:6px;">{j2}</div>
+                                    <div style="font-size:1.4rem; font-weight:700; color:{c2_color}; font-family:'Playfair Display',serif;">{(1-proba_mm):.1%}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with rc3:
+                                h2h_str_mm = f"{h2h_mm['j1_tot']}-{h2h_mm['j2_tot']}" if h2h_mm["total"]>0 else "—"
+                                st.markdown(f"""
+                                <div style="text-align:center; padding:12px;">
+                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">H2H</div>
+                                    <div style="font-size:1.1rem; color:#c8c0b0; font-weight:600;">{h2h_str_mm}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with rc4:
+                                st.markdown(f"""
+                                <div style="text-align:center; padding:12px;">
+                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Confidence</div>
+                                    <div style="font-size:1.1rem; font-weight:700; color:{conf_color_mm};">{conf_mm}/100</div>
+                                    <div style="font-size:0.65rem; color:{conf_color_mm}; letter-spacing:1.5px;">{conf_label_mm}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                            # Barre de probabilité
+                            st.markdown(f"""
+                            <div style="padding:0 0 8px 0;">
+                                <div class="bar-track" style="height:6px; border-radius:3px;">
+                                    <div style="width:{proba_mm*100:.1f}%; height:100%; border-radius:3px;
+                                                background:linear-gradient(90deg,#1a6e48,#3dd68c);"></div>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; margin-top:4px;">
+                                    <span style="font-size:0.65rem; color:#3dd68c;">{j1}</span>
+                                    <span style="font-size:0.65rem; color:#4a5e60;">{j2}</span>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # Analyse Claude AI
+                            if mm_ai and ANTHROPIC_AVAILABLE:
+                                with st.spinner(f"Analyse IA : {j1} vs {j2}..."):
+                                    ai_txt = get_claude_analysis(j1, j2, s1_mm, s2_mm,
+                                                                  h2h_mm, mm_surface,
+                                                                  mm_level, proba_mm, "ATP")
+                                if ai_txt:
+                                    import re as _re2
+                                    ai_html = _re2.sub(r'\*\*(.+?)\*\*',
+                                                       r'<strong style="color:#e8e0d0;">\1</strong>',
+                                                       ai_txt).replace('\n', '<br>')
+                                    with st.expander("📖 Analyse IA", expanded=True):
+                                        st.markdown(f"""
+                                        <div style="font-family:'DM Sans',sans-serif; font-size:0.88rem;
+                                                    line-height:1.8; color:#a0b0b2; padding:4px 0;">
+                                            {ai_html}
+                                        </div>
+                                        """, unsafe_allow_html=True)
+
+                            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
 # TAB 2 — EXPLORE
