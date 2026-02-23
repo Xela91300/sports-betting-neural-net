@@ -336,7 +336,10 @@ footer { visibility: hidden; }
 @st.cache_resource
 def load_model(tour, surface):
     """Charge le modèle pour un tour (atp/wta) et une surface."""
-    path = MODELS_DIR / f"tennis_model_{tour}_{surface.lower()}.h5"
+    # Essayer les deux casses (Hard et hard)
+    path = MODELS_DIR / f"tennis_model_{tour}_{surface}.h5"
+    if not path.exists():
+        path = MODELS_DIR / f"tennis_model_{tour}_{surface.lower()}.h5"
     if not path.exists():
         path = MODELS_DIR / f"tennis_model_{surface.lower()}.h5"
     if not path.exists():
@@ -350,7 +353,10 @@ def load_model(tour, surface):
 
 @st.cache_resource
 def load_scaler(tour, surface):
-    path = MODELS_DIR / f"tennis_scaler_{tour}_{surface.lower()}.joblib"
+    # Essayer les deux casses (Hard et hard)
+    path = MODELS_DIR / f"tennis_scaler_{tour}_{surface}.joblib"
+    if not path.exists():
+        path = MODELS_DIR / f"tennis_scaler_{tour}_{surface.lower()}.joblib"
     if not path.exists():
         path = MODELS_DIR / f"tennis_scaler_{surface.lower()}.joblib"
     if not path.exists():
@@ -1102,7 +1108,7 @@ with tab_pred:
                 # ── Feature vector debug ──────────────────────
                 with st.expander("Feature vector details"):
                     st.dataframe(
-                        pd.DataFrame({"Feature": FEATURES, "Value": fv}),
+                        pd.DataFrame({"Feature": FEATURES[:len(fv)], "Value": fv}),
                         hide_index=True, use_container_width=True
                     )
 
