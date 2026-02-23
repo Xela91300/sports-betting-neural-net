@@ -997,12 +997,27 @@ with tab_pred:
                 fv = build_feature_vector(s1, s2, h2h["h2h_score"], surface, best_of, str(level))
                 X  = np.array(fv).reshape(1, -1)
 
+                # Vérifier compatibilité modèle
+                try:
+                    model_input = model.input_shape
+                    n_model = model_input[-1] if isinstance(model_input, tuple) else model_input[0][-1]
+                except Exception:
+                    n_model = None
+
+                if n_model and n_model != X.shape[1]:
+                    st.error(
+                        f"⚠️ **Modèle incompatible** : le modèle attend **{n_model} features** "
+                        f"mais le code en génère **{X.shape[1]}**. "
+                        f"Lance le notebook d'entraînement complet pour régénérer les modèles."
+                    )
+                    st.stop()
+
                 if scaler:
                     n_exp = getattr(scaler, "n_features_in_", None)
                     if n_exp and n_exp == X.shape[1]:
                         X = scaler.transform(X)
-                    else:
-                        st.caption(f"⚠ Scaler mismatch ({n_exp} vs {X.shape[1]}) — retrain model.")
+                    elif n_exp:
+                        st.caption(f"⚠ Scaler mismatch ({n_exp} vs {X.shape[1]}) — prédiction sans normalisation.")
 
                 with st.spinner(""):
                     proba = float(model.predict(X, verbose=0)[0][0])
