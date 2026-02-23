@@ -5,10 +5,10 @@ from pathlib import Path
 import joblib
 import json
 try:
-    import anthropic
-    ANTHROPIC_AVAILABLE = True
+    from groq import Groq
+    GROQ_AVAILABLE = True
 except ImportError:
-    ANTHROPIC_AVAILABLE = False
+    GROQ_AVAILABLE = False
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -780,19 +780,32 @@ Sois précis, factuel, basé uniquement sur les stats fournies. Pas de spéculat
 
     return prompt
 
-def get_claude_analysis(j1, j2, s1, s2, h2h, surface, level, proba, tour):
-    """Appelle l'API Claude pour une analyse textuelle du match."""
-    if not ANTHROPIC_AVAILABLE:
+def get_groq_key():
+    """Récupère la clé API Groq depuis st.secrets ou variable d'environnement."""
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except Exception:
+        pass
+    import os
+    return os.environ.get("GROQ_API_KEY", None)
+
+def get_groq_analysis(j1, j2, s1, s2, h2h, surface, level, proba, tour):
+    """Appelle l'API Groq (Llama 3.3 70B) pour une analyse textuelle du match."""
+    if not GROQ_AVAILABLE:
+        return None
+    api_key = get_groq_key()
+    if not api_key:
         return None
     try:
-        client  = anthropic.Anthropic()
-        prompt  = build_ai_prompt(j1, j2, s1, s2, h2h, surface, level, proba, tour)
-        message = client.messages.create(
-            model="claude-opus-4-6",
+        client   = Groq(api_key=api_key)
+        prompt   = build_ai_prompt(j1, j2, s1, s2, h2h, surface, level, proba, tour)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=600,
-            messages=[{"role": "user", "content": prompt}]
+            temperature=0.4,
         )
-        return message.content[0].text
+        return response.choices[0].message.content
     except Exception as e:
         return f"Analyse IA indisponible : {e}"
 
@@ -1280,13 +1293,13 @@ with tab_pred:
                                 font-weight:700; color:#e8e0d0;">AI Match Analysis</div>
                     <div style="font-size:0.65rem; color:#3dd68c; letter-spacing:3px;
                                 text-transform:uppercase; border:1px solid #3dd68c44;
-                                padding:3px 10px; border-radius:20px;">Claude AI</div>
+                                padding:3px 10px; border-radius:20px;">Groq AI</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-                if ANTHROPIC_AVAILABLE:
+                if GROQ_AVAILABLE:
                     with st.spinner("Analyse en cours..."):
-                        ai_analysis = get_claude_analysis(
+                        ai_analysis = get_groq_analysis(
                             joueur1, joueur2, s1, s2, h2h,
                             surface, level, proba, tour
                         )
@@ -1308,7 +1321,7 @@ with tab_pred:
                     st.markdown("""
                     <div class="card" style="border-color:#2a3e4044; padding:20px; text-align:center;">
                         <div style="color:#4a5e60; font-size:0.8rem; letter-spacing:2px; text-transform:uppercase;">
-                            AI Analysis unavailable — install <code>anthropic</code> package
+                            AI Analysis unavailable — add GROQ_API_KEY in Streamlit secrets
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1346,7 +1359,7 @@ with tab_multi:
     n_matchs = st.number_input("Nombre de matchs à analyser", min_value=1, max_value=15,
                                 value=3, step=1, key="mm_n")
 
-    mm_ai = st.checkbox("Inclure l'analyse Claude AI pour chaque match", value=True, key="mm_ai")
+    mm_ai = st.checkbox("Inclure l'analyse Groq AI pour chaque match", value=True, key="mm_ai")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -1536,9 +1549,9 @@ with tab_multi:
                         """, unsafe_allow_html=True)
 
                         # Analyse Claude AI
-                        if mm_ai and ANTHROPIC_AVAILABLE:
+                        if mm_ai and GROQ_AVAILABLE:
                             with st.spinner(f"Analyse IA : {j1} vs {j2}..."):
-                                ai_txt = get_claude_analysis(j1, j2, s1_mm, s2_mm,
+                                ai_txt = get_groq_analysis(j1, j2, s1_mm, s2_mm,
                                                               h2h_mm, mm_surface,
                                                               mm_level, proba_mm, "ATP")
                             if ai_txt:
