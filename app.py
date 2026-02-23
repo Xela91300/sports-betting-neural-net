@@ -1318,211 +1318,219 @@ with tab_pred:
 # TAB 2 — MULTI-MATCH
 # ══════════════════════════════════════════════════════════════
 with tab_multi:
+    import re as _re_mm
     st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
     st.markdown("""
-    <div style="margin-bottom:24px;">
+    <div style="margin-bottom:20px;">
         <div class="card-title" style="margin-bottom:8px;">Multi-Match Analysis</div>
         <div style="font-size:0.82rem; color:#4a5e60; letter-spacing:1px;">
-            Analyse plusieurs matchs simultanément. Saisissez chaque match sur une ligne :
-            <code style="color:#3dd68c; background:#0d1516; padding:2px 8px; border-radius:4px;">
-            Joueur1 vs Joueur2
-            </code>
+            Ajoute autant de matchs que tu veux. Chaque match a son propre tournoi.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Config globale ────────────────────────────────────────
-    mm_c1, mm_c2 = st.columns([3, 1])
-    with mm_c1:
-        mm_tourn = st.selectbox("Tournoi", TOURN_NAMES, key="mm_tourn")
-    # Surface, niveau et best_of déduits automatiquement du tournoi
-    mm_surface, mm_level, mm_best_of = TOURN_DICT.get(mm_tourn, ("Hard", "A", 3))
-    with mm_c2:
-        # Badge surface automatique
-        surf_colors = {"Hard": "#4a90d9", "Clay": "#c8703a", "Grass": "#3dd68c"}
-        sc = surf_colors.get(mm_surface, "#4a5e60")
+    # ── Nombre de matchs ──────────────────────────────────────
+    n_matchs = st.number_input("Nombre de matchs à analyser", min_value=1, max_value=15,
+                                value=3, step=1, key="mm_n")
+
+    mm_ai = st.checkbox("Inclure l'analyse Claude AI pour chaque match", value=True, key="mm_ai")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ── Saisie dynamique : un bloc par match ──────────────────
+    surf_colors_mm = {"Hard": "#4a90d9", "Clay": "#c8703a", "Grass": "#3dd68c"}
+    matchs_config = []
+
+    for mi in range(int(n_matchs)):
+        st.markdown(f'<div style="font-size:0.72rem; color:#3dd68c; letter-spacing:3px; text-transform:uppercase; margin-bottom:10px; margin-top:{'20px' if mi>0 else '0'} ;">Match {mi+1}</div>', unsafe_allow_html=True)
+
+        mc1, mc2, mc3 = st.columns([2, 2, 3])
+        with mc1:
+            j1_i = st.text_input("Joueur 1", key=f"mm_j1_{mi}", placeholder="Ex: Sinner J.")
+        with mc2:
+            j2_i = st.text_input("Joueur 2", key=f"mm_j2_{mi}", placeholder="Ex: Alcaraz C.")
+        with mc3:
+            tourn_i = st.selectbox("Tournoi", TOURN_NAMES, key=f"mm_tourn_{mi}")
+
+        surf_i, level_i, bo_i = TOURN_DICT.get(tourn_i, ("Hard", "A", 3))
+        sc_i = surf_colors_mm.get(surf_i, "#4a5e60")
+        level_labels_mm = {"G":"Grand Chelem","M":"Masters 1000","500":"ATP 500","A":"ATP Tour","F":"Finals"}
         st.markdown(f"""
-        <div style="margin-top:28px; text-align:center;">
-            <span style="background:{sc}22; color:{sc}; border:1px solid {sc}55;
-                         padding:6px 18px; border-radius:20px; font-size:0.8rem;
-                         letter-spacing:2px; text-transform:uppercase; font-weight:600;">
-                🎾 {mm_surface}
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:4px; flex-wrap:wrap;">
+            <span style="background:{sc_i}22; color:{sc_i}; border:1px solid {sc_i}44;
+                         padding:3px 12px; border-radius:20px; font-size:0.72rem;
+                         letter-spacing:2px; text-transform:uppercase;">🎾 {surf_i}</span>
+            <span style="color:#4a5e60; font-size:0.72rem; letter-spacing:1px;">
+                {level_labels_mm.get(level_i, level_i)} · Best of {bo_i}
             </span>
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Saisie des matchs ─────────────────────────────────────
-    st.markdown('<div style="margin-top:16px; margin-bottom:8px; font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase;">Matchs à analyser</div>', unsafe_allow_html=True)
+        matchs_config.append((j1_i, j2_i, tourn_i, surf_i, level_i, bo_i))
 
-    matchs_input = st.text_area(
-        label="",
-        placeholder="Djokovic N. vs Alcaraz C.\nSinner J. vs Zverev A.\nMedvedev D. vs Tsitsipas S.",
-        height=160,
-        key="mm_input",
-        label_visibility="collapsed"
-    )
+        if mi < int(n_matchs) - 1:
+            st.markdown('<div style="border-top:1px solid #1a2a2c; margin:16px 0 0 0;"></div>', unsafe_allow_html=True)
 
-    mm_ai = st.checkbox("Inclure l'analyse Claude AI pour chaque match", value=True, key="mm_ai")
-
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     col_btn_mm = st.columns([1, 2, 1])
     with col_btn_mm[1]:
         mm_clicked = st.button("⚡  ANALYSER TOUS LES MATCHS", use_container_width=True, key="mm_btn")
 
     if mm_clicked:
-        if not matchs_input.strip():
-            st.warning("Saisir au moins un match.")
-        elif atp_data is None:
+        if atp_data is None:
             st.error("Données ATP non disponibles.")
         else:
-            # Parser les lignes
-            lines = [l.strip() for l in matchs_input.strip().splitlines() if l.strip()]
-            matchs_parsed = []
-            for line in lines:
-                # Accepter "A vs B", "A v B", "A - B"
-                import re as _re
-                m = _re.split(r'\s+(?:vs\.?|v\.?|-)\s+', line, flags=_re.IGNORECASE)
-                if len(m) == 2:
-                    matchs_parsed.append((m[0].strip(), m[1].strip()))
-                else:
-                    st.caption(f"⚠️ Ligne ignorée (format invalide) : `{line}`")
+            # Filtrer les matchs valides (j1 et j2 renseignés)
+            matchs_valides = [(j1,j2,tourn,surf,lvl,bo)
+                              for j1,j2,tourn,surf,lvl,bo in matchs_config
+                              if j1.strip() and j2.strip()]
 
-            if not matchs_parsed:
-                st.error("Aucun match valide détecté. Format : `Joueur1 vs Joueur2`")
+            if not matchs_valides:
+                st.warning("Renseigne au moins un match complet (Joueur 1 + Joueur 2).")
             else:
-                st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:16px;">{len(matchs_parsed)} match(s) analysé(s)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:16px;">{len(matchs_valides)} match(s) analysé(s)</div>', unsafe_allow_html=True)
 
-                model_mm  = load_model("atp", mm_surface)
-                scaler_mm = load_scaler("atp", mm_surface)
+                # Cache des modèles par surface pour éviter de les recharger
+                model_cache, scaler_cache = {}, {}
 
-                if not model_mm:
-                    st.error(f"Modèle ATP {mm_surface} introuvable.")
-                else:
+                for idx_m, (j1, j2, tourn_mm, mm_surface, mm_level, mm_best_of) in enumerate(matchs_valides):
+                    # Charger modèle si pas encore en cache
+                    if mm_surface not in model_cache:
+                        model_cache[mm_surface]  = load_model("atp", mm_surface)
+                        scaler_cache[mm_surface] = load_scaler("atp", mm_surface)
+                    model_mm  = model_cache[mm_surface]
+                    scaler_mm = scaler_cache[mm_surface]
+
+                    if not model_mm:
+                        st.error(f"Modèle ATP {mm_surface} introuvable.")
+                        continue
+
                     try:
                         n_model_mm = model_mm.input_shape[-1]
                     except Exception:
                         n_model_mm = 21
 
-                    for idx_m, (j1, j2) in enumerate(matchs_parsed):
-                        s1_mm = get_player_stats(atp_data, j1, mm_surface)
-                        s2_mm = get_player_stats(atp_data, j2, mm_surface)
-                        h2h_mm = get_h2h(atp_data, j1, j2, mm_surface)
+                    s1_mm = get_player_stats(atp_data, j1, mm_surface)
+                    s2_mm = get_player_stats(atp_data, j2, mm_surface)
+                    h2h_mm = get_h2h(atp_data, j1, j2, mm_surface)
 
-                        with st.container():
-                            # Header du match
-                            st.markdown(f"""
-                            <div class="card" style="margin-bottom:8px; padding:20px 24px;">
-                                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+                    with st.container():
+                        # Header du match avec tournoi
+                        st.markdown(f"""
+                        <div class="card" style="margin-bottom:8px; padding:20px 24px;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+                                <div>
                                     <div style="font-family:'Playfair Display',serif; font-size:1.1rem; font-weight:700; color:#e8e0d0;">
                                         {j1} <span style="color:#3dd68c; margin:0 12px;">vs</span> {j2}
                                     </div>
-                                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                                        {surface_badge(mm_surface)}
-                                        {level_badge(mm_level)}
-                                        <span class="badge badge-atp">ATP</span>
+                                    <div style="font-size:0.72rem; color:#4a5e60; margin-top:4px; letter-spacing:1px;">
+                                        {tourn_mm}
                                     </div>
                                 </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            if s1_mm is None or s2_mm is None:
-                                missing = j1 if s1_mm is None else j2
-                                st.markdown(f'<div style="color:#e07878; font-size:0.82rem; padding:8px 0 16px 0;">⚠️ Joueur introuvable dans les données : <strong>{missing}</strong></div>', unsafe_allow_html=True)
-                                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-                                continue
-
-                            # Prédiction
-                            fv_mm = build_feature_vector(s1_mm, s2_mm, h2h_mm["h2h_score"],
-                                                         mm_surface, float(mm_best_of), mm_level,
-                                                         n_features=n_model_mm)
-                            X_mm = np.array(fv_mm).reshape(1, -1)
-
-                            if scaler_mm:
-                                n_exp_mm = getattr(scaler_mm, "n_features_in_", None)
-                                if n_exp_mm == X_mm.shape[1]:
-                                    X_mm = scaler_mm.transform(X_mm)
-
-                            proba_mm = float(model_mm.predict(X_mm, verbose=0)[0][0])
-                            conf_mm, _ = confidence_score(proba_mm, s1_mm, s2_mm, h2h_mm)
-
-                            fav_mm  = j1 if proba_mm >= 0.5 else j2
-                            pct_fav = proba_mm if proba_mm >= 0.5 else 1 - proba_mm
-                            pct_dog = 1 - pct_fav
-
-                            conf_color_mm = "#3dd68c" if conf_mm>=70 else "#f5c842" if conf_mm>=45 else "#e07878"
-                            conf_label_mm = "HIGH" if conf_mm>=70 else "MODERATE" if conf_mm>=45 else "LOW"
-
-                            # Résultat compact
-                            rc1, rc2, rc3, rc4 = st.columns([3, 3, 2, 2])
-                            with rc1:
-                                c1_color = "#3dd68c" if proba_mm >= 0.5 else "#4a5e60"
-                                st.markdown(f"""
-                                <div style="text-align:center; padding:12px;">
-                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Joueur 1</div>
-                                    <div style="font-size:0.92rem; color:#e8e0d0; font-weight:600; margin-bottom:6px;">{j1}</div>
-                                    <div style="font-size:1.4rem; font-weight:700; color:{c1_color}; font-family:'Playfair Display',serif;">{proba_mm:.1%}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            with rc2:
-                                c2_color = "#3dd68c" if proba_mm < 0.5 else "#4a5e60"
-                                st.markdown(f"""
-                                <div style="text-align:center; padding:12px;">
-                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Joueur 2</div>
-                                    <div style="font-size:0.92rem; color:#e8e0d0; font-weight:600; margin-bottom:6px;">{j2}</div>
-                                    <div style="font-size:1.4rem; font-weight:700; color:{c2_color}; font-family:'Playfair Display',serif;">{(1-proba_mm):.1%}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            with rc3:
-                                h2h_str_mm = f"{h2h_mm['j1_tot']}-{h2h_mm['j2_tot']}" if h2h_mm["total"]>0 else "—"
-                                st.markdown(f"""
-                                <div style="text-align:center; padding:12px;">
-                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">H2H</div>
-                                    <div style="font-size:1.1rem; color:#c8c0b0; font-weight:600;">{h2h_str_mm}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            with rc4:
-                                st.markdown(f"""
-                                <div style="text-align:center; padding:12px;">
-                                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Confidence</div>
-                                    <div style="font-size:1.1rem; font-weight:700; color:{conf_color_mm};">{conf_mm}/100</div>
-                                    <div style="font-size:0.65rem; color:{conf_color_mm}; letter-spacing:1.5px;">{conf_label_mm}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-
-                            # Barre de probabilité
-                            st.markdown(f"""
-                            <div style="padding:0 0 8px 0;">
-                                <div class="bar-track" style="height:6px; border-radius:3px;">
-                                    <div style="width:{proba_mm*100:.1f}%; height:100%; border-radius:3px;
-                                                background:linear-gradient(90deg,#1a6e48,#3dd68c);"></div>
-                                </div>
-                                <div style="display:flex; justify-content:space-between; margin-top:4px;">
-                                    <span style="font-size:0.65rem; color:#3dd68c;">{j1}</span>
-                                    <span style="font-size:0.65rem; color:#4a5e60;">{j2}</span>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    {surface_badge(mm_surface)}
+                                    {level_badge(mm_level)}
+                                    <span class="badge badge-atp">ATP</span>
                                 </div>
                             </div>
-                            """, unsafe_allow_html=True)
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                            # Analyse Claude AI
-                            if mm_ai and ANTHROPIC_AVAILABLE:
-                                with st.spinner(f"Analyse IA : {j1} vs {j2}..."):
-                                    ai_txt = get_claude_analysis(j1, j2, s1_mm, s2_mm,
-                                                                  h2h_mm, mm_surface,
-                                                                  mm_level, proba_mm, "ATP")
-                                if ai_txt:
-                                    import re as _re2
-                                    ai_html = _re2.sub(r'\*\*(.+?)\*\*',
-                                                       r'<strong style="color:#e8e0d0;">\1</strong>',
-                                                       ai_txt).replace('\n', '<br>')
-                                    with st.expander("📖 Analyse IA", expanded=True):
-                                        st.markdown(f"""
-                                        <div style="font-family:'DM Sans',sans-serif; font-size:0.88rem;
-                                                    line-height:1.8; color:#a0b0b2; padding:4px 0;">
-                                            {ai_html}
-                                        </div>
-                                        """, unsafe_allow_html=True)
-
+                        if s1_mm is None or s2_mm is None:
+                            missing = j1 if s1_mm is None else j2
+                            st.markdown(f'<div style="color:#e07878; font-size:0.82rem; padding:8px 0 16px 0;">⚠️ Joueur introuvable : <strong>{missing}</strong> — vérifie l'orthographe du nom</div>', unsafe_allow_html=True)
                             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                            continue
+
+                        # Prédiction
+                        fv_mm = build_feature_vector(s1_mm, s2_mm, h2h_mm["h2h_score"],
+                                                     mm_surface, float(mm_best_of), mm_level,
+                                                     n_features=n_model_mm)
+                        X_mm = np.array(fv_mm).reshape(1, -1)
+
+                        if scaler_mm:
+                            n_exp_mm = getattr(scaler_mm, "n_features_in_", None)
+                            if n_exp_mm == X_mm.shape[1]:
+                                X_mm = scaler_mm.transform(X_mm)
+
+                        proba_mm = float(model_mm.predict(X_mm, verbose=0)[0][0])
+                        conf_mm, _ = confidence_score(proba_mm, s1_mm, s2_mm, h2h_mm)
+
+                        fav_mm  = j1 if proba_mm >= 0.5 else j2
+                        conf_color_mm = "#3dd68c" if conf_mm>=70 else "#f5c842" if conf_mm>=45 else "#e07878"
+                        conf_label_mm = "HIGH" if conf_mm>=70 else "MODERATE" if conf_mm>=45 else "LOW"
+
+                        # Résultat compact
+                        rc1, rc2, rc3, rc4 = st.columns([3, 3, 2, 2])
+                        with rc1:
+                            c1_color = "#3dd68c" if proba_mm >= 0.5 else "#4a5e60"
+                            st.markdown(f"""
+                            <div style="text-align:center; padding:12px;">
+                                <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Joueur 1</div>
+                                <div style="font-size:0.92rem; color:#e8e0d0; font-weight:600; margin-bottom:6px;">{j1}</div>
+                                <div style="font-size:1.4rem; font-weight:700; color:{c1_color}; font-family:'Playfair Display',serif;">{proba_mm:.1%}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        with rc2:
+                            c2_color = "#3dd68c" if proba_mm < 0.5 else "#4a5e60"
+                            st.markdown(f"""
+                            <div style="text-align:center; padding:12px;">
+                                <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Joueur 2</div>
+                                <div style="font-size:0.92rem; color:#e8e0d0; font-weight:600; margin-bottom:6px;">{j2}</div>
+                                <div style="font-size:1.4rem; font-weight:700; color:{c2_color}; font-family:'Playfair Display',serif;">{(1-proba_mm):.1%}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        with rc3:
+                            h2h_str_mm = f"{h2h_mm['j1_tot']}-{h2h_mm['j2_tot']}" if h2h_mm["total"]>0 else "—"
+                            st.markdown(f"""
+                            <div style="text-align:center; padding:12px;">
+                                <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">H2H</div>
+                                <div style="font-size:1.1rem; color:#c8c0b0; font-weight:600;">{h2h_str_mm}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        with rc4:
+                            st.markdown(f"""
+                            <div style="text-align:center; padding:12px;">
+                                <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Confidence</div>
+                                <div style="font-size:1.1rem; font-weight:700; color:{conf_color_mm};">{conf_mm}/100</div>
+                                <div style="font-size:0.65rem; color:{conf_color_mm}; letter-spacing:1.5px;">{conf_label_mm}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        # Barre de probabilité
+                        st.markdown(f"""
+                        <div style="padding:0 0 8px 0;">
+                            <div class="bar-track" style="height:6px; border-radius:3px;">
+                                <div style="width:{proba_mm*100:.1f}%; height:100%; border-radius:3px;
+                                            background:linear-gradient(90deg,#1a6e48,#3dd68c);"></div>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; margin-top:4px;">
+                                <span style="font-size:0.65rem; color:#3dd68c;">{j1}</span>
+                                <span style="font-size:0.65rem; color:#4a5e60;">{j2}</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # Analyse Claude AI
+                        if mm_ai and ANTHROPIC_AVAILABLE:
+                            with st.spinner(f"Analyse IA : {j1} vs {j2}..."):
+                                ai_txt = get_claude_analysis(j1, j2, s1_mm, s2_mm,
+                                                              h2h_mm, mm_surface,
+                                                              mm_level, proba_mm, "ATP")
+                            if ai_txt:
+                                ai_html = _re_mm.sub(r'\*\*(.+?)\*\*',
+                                                   r'<strong style="color:#e8e0d0;">\1</strong>',
+                                                   ai_txt).replace('\n', '<br>')
+                                with st.expander("📖 Analyse IA", expanded=True):
+                                    st.markdown(f"""
+                                    <div style="font-family:'DM Sans',sans-serif; font-size:0.88rem;
+                                                line-height:1.8; color:#a0b0b2; padding:4px 0;">
+                                        {ai_html}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+
+                        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
 # TAB 2 — EXPLORE
