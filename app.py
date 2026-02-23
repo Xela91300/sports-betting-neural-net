@@ -610,10 +610,12 @@ def get_h2h(df, j1, j2, surface=None):
     j2_surf = int((h2h_s["winner_name"]==j2).sum()) if surface else None
     h2h_sc  = j1_tot/len(h2h) if len(h2h)>0 else 0.5
 
-    recent = h2h.sort_values("tourney_date",ascending=False).head(5)[
-        ["tourney_date","tourney_name","surface","round","winner_name","loser_name","score"]
-    ].copy()
-    recent["tourney_date"] = recent["tourney_date"].dt.strftime("%Y-%m-%d")
+    # Sélectionner uniquement les colonnes disponibles (tennis-data n'a pas toutes les colonnes)
+    cols_wanted = ["tourney_date","tourney_name","surface","round","winner_name","loser_name","score"]
+    cols_available = [c for c in cols_wanted if c in h2h.columns]
+    recent = h2h.sort_values("tourney_date", ascending=False).head(5)[cols_available].copy()
+    if "tourney_date" in recent.columns:
+        recent["tourney_date"] = recent["tourney_date"].dt.strftime("%Y-%m-%d")
     return {
         "total":j1_tot+j2_tot,"j1_tot":j1_tot,"j2_tot":j2_tot,
         "j1_surf":j1_surf,"j2_surf":j2_surf,"surf_total":len(h2h_s),
