@@ -632,16 +632,23 @@ def confidence_score(proba, s1, s2, h2h):
     signals.append(("Recent form alignment", form_ok*15))
     return round(min(sum(v for _,v in signals), 100)), signals
 
-def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level):
+def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level, n_features=21):
+    """
+    Génère le vecteur de features.
+    n_features=21 : version complète (nouveaux modèles)
+    n_features=18 : version sans niveau tournoi (anciens modèles)
+    """
     def sd(k):
         a, b = s1.get(k), s2.get(k)
         if a is not None and b is not None and pd.notna(a) and pd.notna(b):
             return float(a)-float(b)
         return 0.0
-    level_gs   = int(level in ("G","Grand Slam"))
-    level_m    = int(level in ("M","Masters"))
-    level_500  = int(level in ("500","A"))
-    return [
+    level_gs  = int(level in ("G","Grand Slam"))
+    level_m   = int(level in ("M","Masters"))
+    level_500 = int(level in ("500","A"))
+
+    # 18 features de base (compatibles avec anciens modèles)
+    fv = [
         sd("rank"), sd("rank_pts"), sd("age"),
         sd("form_pct"), sd("fatigue"),
         sd("ace_avg"), sd("df_avg"),
@@ -649,8 +656,11 @@ def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level):
         sd("pct_bp_saved"), sd("pct_ret_1st"), sd("pct_ret_2nd"),
         float(h2h_sc), float(best_of),
         int(surface=="Hard"), int(surface=="Clay"), int(surface=="Grass"),
-        level_gs, level_m, level_500,
     ]
+    # 3 features supplémentaires pour les nouveaux modèles (21 features)
+    if n_features == 21:
+        fv += [level_gs, level_m, level_500]
+    return fv
 
 # ─────────────────────────────────────────────────────────────
 # HELPERS HTML
@@ -994,24 +1004,21 @@ with tab_pred:
             if not model:
                 st.warning(f"Model `tennis_model_{tour_key}_{surface.lower()}.h5` not found in models/. Run the training notebook first.")
             else:
-                fv = build_feature_vector(s1, s2, h2h["h2h_score"], surface, best_of, str(level))
-                X  = np.array(fv).reshape(1, -1)
-
-                # Vérifier compatibilité modèle
+                # Détecter le nombre de features attendu par le modèle
                 try:
                     model_input = model.input_shape
                     n_model = model_input[-1] if isinstance(model_input, tuple) else model_input[0][-1]
                 except Exception:
-                    n_model = None
+                    n_model = 21  # défaut nouveaux modèles
 
-                if n_model and n_model != X.shape[1]:
-                    st.error(
-                        f"⚠️ **Modèle incompatible** : le modèle attend **{n_model} features** "
-                        f"mais le code en génère **{X.shape[1]}**. "
-                        f"Lance le notebook d'entraînement complet pour régénérer les modèles."
-                    )
-                    st.stop()
+                # Générer le vecteur avec le bon nombre de features
+                fv = build_feature_vector(
+                    s1, s2, h2h["h2h_score"], surface, best_of, str(level),
+                    n_features=n_model
+                )
+                X = np.array(fv).reshape(1, -1)
 
+                # Appliquer le scaler si compatible
                 if scaler:
                     n_exp = getattr(scaler, "n_features_in_", None)
                     if n_exp and n_exp == X.shape[1]:
