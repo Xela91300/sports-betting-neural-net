@@ -34,14 +34,14 @@
   ],
   "results": {
     "atp_Hard": {
-      "accuracy": 0.6505078673362732,
-      "auc": 0.7105885148048401,
-      "status": "trained"
+      "accuracy": 0.6275861859321594,
+      "auc": 0.7147190570831299,
+      "last_finetuned": "2026-02-23"
     },
     "atp_Clay": {
-      "accuracy": 0.6364061236381531,
-      "auc": 0.7066024541854858,
-      "status": "trained"
+      "accuracy": 0.4285714328289032,
+      "auc": 0.44387757778167725,
+      "last_finetuned": "2026-02-23"
     },
     "atp_Grass": {
       "accuracy": 0.6535186171531677,
@@ -49,9 +49,9 @@
       "status": "trained"
     },
     "wta_Hard": {
-      "accuracy": 0.6242870092391968,
-      "auc": 0.6814013123512268,
-      "status": "trained"
+      "accuracy": 0.63922518491745,
+      "auc": 0.7014328837394714,
+      "last_finetuned": "2026-02-23"
     },
     "wta_Clay": {
       "accuracy": 0.6403129696846008,
@@ -72,5 +72,6 @@
     "n_stats": 15,
     "fatigue_days": 7,
     "split": "chronological 80/20"
-  }
+  },
+  "finetune_months": 6
 }
