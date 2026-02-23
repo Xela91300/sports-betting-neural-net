@@ -1342,7 +1342,8 @@ with tab_multi:
     matchs_config = []
 
     for mi in range(int(n_matchs)):
-        st.markdown(f'<div style="font-size:0.72rem; color:#3dd68c; letter-spacing:3px; text-transform:uppercase; margin-bottom:10px; margin-top:{'20px' if mi>0 else '0'} ;">Match {mi+1}</div>', unsafe_allow_html=True)
+        margin_top_mi = "20px" if mi > 0 else "0"
+        st.markdown(f'<div style="font-size:0.72rem; color:#3dd68c; letter-spacing:3px; text-transform:uppercase; margin-bottom:10px; margin-top:{margin_top_mi};">Match {mi+1}</div>', unsafe_allow_html=True)
 
         mc1, mc2, mc3 = st.columns([2, 2, 3])
         with mc1:
@@ -1439,7 +1440,7 @@ with tab_multi:
 
                         if s1_mm is None or s2_mm is None:
                             missing = j1 if s1_mm is None else j2
-                            st.markdown(f'<div style="color:#e07878; font-size:0.82rem; padding:8px 0 16px 0;">⚠️ Joueur introuvable : <strong>{missing}</strong> — vérifie l'orthographe du nom</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div style="color:#e07878; font-size:0.82rem; padding:8px 0 16px 0;">&#9888;&#65039; Joueur introuvable : <strong>{missing}</strong> — vérifie l\'orthographe</div>', unsafe_allow_html=True)
                             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
                             continue
 
