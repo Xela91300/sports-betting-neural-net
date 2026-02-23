@@ -34,6 +34,79 @@ SURFACES  = ["Hard", "Clay", "Grass"]
 TOURS     = {"ATP": "atp", "WTA": "wta"}
 ATP_ONLY  = True   # Mettre False pour réactiver WTA
 
+# ── Liste des tournois ATP avec surface et niveau automatiques ─
+TOURNAMENTS_ATP = [
+    # Grand Chelems
+    ("Australian Open",      "Hard",  "G", 5),
+    ("Roland Garros",        "Clay",  "G", 5),
+    ("Wimbledon",            "Grass", "G", 5),
+    ("US Open",              "Hard",  "G", 5),
+    # Masters 1000
+    ("Indian Wells Masters", "Hard",  "M", 3),
+    ("Miami Open",           "Hard",  "M", 3),
+    ("Monte-Carlo Masters",  "Clay",  "M", 3),
+    ("Madrid Open",          "Clay",  "M", 3),
+    ("Italian Open",         "Clay",  "M", 3),
+    ("Canadian Open",        "Hard",  "M", 3),
+    ("Cincinnati Masters",   "Hard",  "M", 3),
+    ("Shanghai Masters",     "Hard",  "M", 3),
+    ("Paris Masters",        "Hard",  "M", 3),
+    # ATP 500
+    ("Rotterdam",            "Hard",  "500", 3),
+    ("Dubai Tennis Champs",  "Hard",  "500", 3),
+    ("Acapulco",             "Hard",  "500", 3),
+    ("Barcelona Open",       "Clay",  "500", 3),
+    ("Halle Open",           "Grass", "500", 3),
+    ("Queen's Club",        "Grass", "500", 3),
+    ("Hamburg Open",         "Clay",  "500", 3),
+    ("Washington Open",      "Hard",  "500", 3),
+    ("Tokyo",                "Hard",  "500", 3),
+    ("Vienna Open",          "Hard",  "500", 3),
+    ("Basel",                "Hard",  "500", 3),
+    ("Beijing",              "Hard",  "500", 3),
+    # ATP Finals
+    ("Nitto ATP Finals",     "Hard",  "F",   3),
+    # ATP 250
+    ("Brisbane International","Hard", "A",   3),
+    ("Adelaide International","Hard", "A",   3),
+    ("Auckland Open",        "Hard",  "A",   3),
+    ("Doha",                 "Hard",  "A",   3),
+    ("Montpellier",          "Hard",  "A",   3),
+    ("Marseille",            "Hard",  "A",   3),
+    ("Buenos Aires",         "Clay",  "A",   3),
+    ("Delray Beach",         "Hard",  "A",   3),
+    ("Santiago",             "Clay",  "A",   3),
+    ("Estoril",              "Clay",  "A",   3),
+    ("Munich",               "Clay",  "A",   3),
+    ("Lyon",                 "Clay",  "A",   3),
+    ("Geneva",               "Clay",  "A",   3),
+    ("Nottingham",           "Grass", "A",   3),
+    ("Stuttgart",            "Grass", "A",   3),
+    ("Eastbourne",           "Grass", "A",   3),
+    ("Gstaad",               "Clay",  "A",   3),
+    ("Umag",                 "Clay",  "A",   3),
+    ("Kitzbuhel",            "Clay",  "A",   3),
+    ("Los Cabos",            "Hard",  "A",   3),
+    ("Atlanta",              "Hard",  "A",   3),
+    ("Newport",              "Grass", "A",   3),
+    ("Bastad",               "Clay",  "A",   3),
+    ("Metz",                 "Hard",  "A",   3),
+    ("Chengdu",              "Hard",  "A",   3),
+    ("Hangzhou",             "Hard",  "A",   3),
+    ("Antwerp",              "Hard",  "A",   3),
+    ("Stockholm",            "Hard",  "A",   3),
+    ("St. Petersburg",       "Hard",  "A",   3),
+    ("Cordoba",              "Clay",  "A",   3),
+    ("Dallas",               "Hard",  "A",   3),
+    ("San Diego",            "Hard",  "A",   3),
+    ("Florence",             "Clay",  "A",   3),
+    ("Astana",               "Hard",  "A",   3),
+    ("Pune",                 "Hard",  "A",   3),
+]
+# Dict pour lookup rapide : nom → (surface, level, best_of)
+TOURN_DICT = {t[0]: (t[1], t[2], t[3]) for t in TOURNAMENTS_ATP}
+TOURN_NAMES = [t[0] for t in TOURNAMENTS_ATP]
+
 # ─────────────────────────────────────────────────────────────
 # CSS — Dark Luxury Tennis
 # ─────────────────────────────────────────────────────────────
@@ -1259,15 +1332,24 @@ with tab_multi:
     """, unsafe_allow_html=True)
 
     # ── Config globale ────────────────────────────────────────
-    mm_c1, mm_c2, mm_c3 = st.columns(3)
+    mm_c1, mm_c2 = st.columns([3, 1])
     with mm_c1:
-        mm_surface = st.selectbox("Surface", SURFACES, key="mm_surface")
+        mm_tourn = st.selectbox("Tournoi", TOURN_NAMES, key="mm_tourn")
+    # Surface, niveau et best_of déduits automatiquement du tournoi
+    mm_surface, mm_level, mm_best_of = TOURN_DICT.get(mm_tourn, ("Hard", "A", 3))
     with mm_c2:
-        mm_level = st.selectbox("Niveau", ["A","G","M","500","F"], key="mm_level",
-                                format_func=lambda x: {"G":"Grand Chelem","M":"Masters 1000",
-                                                       "500":"ATP 500","A":"ATP Tour","F":"Finals"}.get(x,x))
-    with mm_c3:
-        mm_best_of = st.selectbox("Best of", [3, 5], key="mm_best_of")
+        # Badge surface automatique
+        surf_colors = {"Hard": "#4a90d9", "Clay": "#c8703a", "Grass": "#3dd68c"}
+        sc = surf_colors.get(mm_surface, "#4a5e60")
+        st.markdown(f"""
+        <div style="margin-top:28px; text-align:center;">
+            <span style="background:{sc}22; color:{sc}; border:1px solid {sc}55;
+                         padding:6px 18px; border-radius:20px; font-size:0.8rem;
+                         letter-spacing:2px; text-transform:uppercase; font-weight:600;">
+                🎾 {mm_surface}
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
 
     # ── Saisie des matchs ─────────────────────────────────────
     st.markdown('<div style="margin-top:16px; margin-bottom:8px; font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase;">Matchs à analyser</div>', unsafe_allow_html=True)
