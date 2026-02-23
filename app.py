@@ -1315,6 +1315,19 @@ with tab_pred:
 
 
 # ══════════════════════════════════════════════════════════════
+# CACHE JOUEURS ATP (partagé entre tabs)
+# ══════════════════════════════════════════════════════════════
+@st.cache_data
+def get_atp_player_list():
+    """Liste triée de tous les joueurs ATP dans la base."""
+    if atp_data is None:
+        return []
+    names = pd.concat([atp_data["winner_name"], atp_data["loser_name"]]).dropna().unique()
+    return sorted(names)
+
+atp_player_list = get_atp_player_list()
+
+# ══════════════════════════════════════════════════════════════
 # TAB 2 — MULTI-MATCH
 # ══════════════════════════════════════════════════════════════
 with tab_multi:
@@ -1347,9 +1360,18 @@ with tab_multi:
 
         mc1, mc2, mc3 = st.columns([2, 2, 3])
         with mc1:
-            j1_i = st.text_input("Joueur 1", key=f"mm_j1_{mi}", placeholder="Ex: Sinner J.")
+            j1_i = st.selectbox(
+                "Joueur 1", atp_player_list,
+                key=f"mm_j1_{mi}",
+                index=None, placeholder="Rechercher un joueur..."
+            )
         with mc2:
-            j2_i = st.text_input("Joueur 2", key=f"mm_j2_{mi}", placeholder="Ex: Alcaraz C.")
+            j2_options = [p for p in atp_player_list if p != j1_i] if j1_i else atp_player_list
+            j2_i = st.selectbox(
+                "Joueur 2", j2_options,
+                key=f"mm_j2_{mi}",
+                index=None, placeholder="Rechercher un joueur..."
+            )
         with mc3:
             tourn_i = st.selectbox("Tournoi", TOURN_NAMES, key=f"mm_tourn_{mi}")
 
@@ -1384,7 +1406,7 @@ with tab_multi:
             # Filtrer les matchs valides (j1 et j2 renseignés)
             matchs_valides = [(j1,j2,tourn,surf,lvl,bo)
                               for j1,j2,tourn,surf,lvl,bo in matchs_config
-                              if j1.strip() and j2.strip()]
+                              if j1 and j2]
 
             if not matchs_valides:
                 st.warning("Renseigne au moins un match complet (Joueur 1 + Joueur 2).")
