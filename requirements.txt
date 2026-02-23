@@ -6,4 +6,4 @@ PyYAML
 h5py
 scikit-learn
 joblib
-anthropic
+groq
