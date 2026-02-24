@@ -30,9 +30,10 @@ FEATURES = [
     "level_gs", "level_m1000", "level_500",
 ]
 
-SURFACES  = ["Hard", "Clay", "Grass"]
-TOURS     = {"ATP": "atp", "WTA": "wta"}
-ATP_ONLY  = True   # Mettre False pour réactiver WTA
+SURFACES   = ["Hard", "Clay", "Grass"]
+TOURS      = {"ATP": "atp", "WTA": "wta"}
+ATP_ONLY   = True   # Mettre False pour réactiver WTA
+START_YEAR = 1998   # Données depuis cette année
 
 # ── Liste des tournois ATP avec surface et niveau automatiques ─
 TOURNAMENTS_ATP = [
@@ -568,14 +569,28 @@ def load_all_data():
         try:
             df = read_csv_robust(f)
             df = apply_column_mapping(df)
-            # Vérifier colonnes essentielles
             if not REQUIRED_COLS.issubset(set(df.columns)):
                 continue
             df["surface"]      = df["surface"].apply(normalize_surface)
             df["tourney_date"] = parse_date_flexible(df["tourney_date"])
             df["winner_rank"]  = pd.to_numeric(df["winner_rank"], errors="coerce")
             df["loser_rank"]   = pd.to_numeric(df["loser_rank"],  errors="coerce")
+            # Colonnes optionnelles — compléter si absentes
+            for col in ["winner_rank_points","loser_rank_points","winner_age","loser_age"]:
+                if col not in df.columns: df[col] = np.nan
+            if "best_of"       not in df.columns: df["best_of"]       = 3
+            if "tourney_level" not in df.columns: df["tourney_level"] = "A"
+            # Stats service → NaN si absentes (challengers anciens)
+            for col in ["w_ace","w_df","w_svpt","w_1stIn","w_1stWon","w_2ndWon",
+                        "w_bpSaved","w_bpFaced","l_ace","l_df","l_svpt",
+                        "l_1stIn","l_1stWon","l_2ndWon","l_bpSaved","l_bpFaced"]:
+                if col not in df.columns: df[col] = np.nan
             df = df[df["tourney_date"].notna()]
+            df = df[df["tourney_date"] >= f"{START_YEAR}-01-01"]
+            df = df[df["surface"].isin(["Hard","Clay","Grass"])]
+            df = df[df["winner_rank"].notna() & df["loser_rank"].notna()]
+            if df.empty: continue
+            # ATP + Challenger (level A, M, G, 500, 250, C)
             if "wta" in f.name.lower():
                 wta_dfs.append(df)
             else:
@@ -822,7 +837,8 @@ def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level, n_features=21)
         return 0.0
     level_gs  = int(level in ("G","Grand Slam"))
     level_m   = int(level in ("M","Masters"))
-    level_500 = int(level in ("500","A"))
+    level_500 = int(level in ("500","A","P"))
+    # Challenger (level C) → traité comme ATP 250, level_500=0
 
     # 18 features de base (compatibles avec anciens modèles)
     fv = [
@@ -981,7 +997,7 @@ with st.sidebar:
 st.markdown("""
 <div style="padding: 32px 0 24px 0;">
     <p class="hero-title">TennisIQ</p>
-    <p class="hero-sub">Neural Network Prediction Engine · ATP & WTA</p>
+    <p class="hero-sub">Neural Network Prediction Engine · ATP 1998–2026</p>
 </div>
 <div class="divider"></div>
 """, unsafe_allow_html=True)
