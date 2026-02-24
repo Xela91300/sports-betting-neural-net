@@ -19,6 +19,7 @@ DATA_DIR           = ROOT_DIR / "src" / "data" / "raw" / "tml-tennis"
 MODELS_DIR.mkdir(exist_ok=True)
 
 FEATURES = [
+    # ── Core (21) ──────────────────────────────────────────
     "rank_diff", "pts_diff", "age_diff",
     "form_diff", "fatigue_diff",
     "ace_diff", "df_diff",
@@ -28,6 +29,12 @@ FEATURES = [
     "h2h_score", "best_of",
     "surface_hard", "surface_clay", "surface_grass",
     "level_gs", "level_m1000", "level_500",
+    # ── Nouvelles features (5) ─────────────────────────────
+    "surf_wr_diff",          # surface win rate 2 ans diff
+    "surf_matches_diff",     # expérience surface diff
+    "days_since_last_diff",  # jours depuis dernier match diff
+    "p1_returning",          # joueur 1 retour après absence
+    "p2_returning",          # joueur 2 retour après absence
 ]
 
 SURFACES   = ["Hard", "Clay", "Grass"]
@@ -629,12 +636,42 @@ def get_player_stats(df, player, surface=None, n_stats=15, n_form=5, fatigue_day
     as_l["o1stIn"]   = as_l["w_1stIn"];  as_l["o1stWon"] = as_l["w_1stWon"]
     as_l["o2ndWon"]  = as_l["w_2ndWon"]
 
+    # Ajouter colonnes score si disponibles (sets, jeux)
+    def add_score_cols(df_side, is_winner):
+        pfx_w = "w" if is_winner else "l"
+        pfx_l = "l" if is_winner else "w"
+        # sets gagnés / perdus
+        df_side["sets_w"] = pd.to_numeric(df_side.get(f"{pfx_w}sets", pd.Series(dtype=float)), errors="coerce") if f"{pfx_w}sets" in df_side.columns else np.nan
+        df_side["sets_l"] = pd.to_numeric(df_side.get(f"{pfx_l}sets", pd.Series(dtype=float)), errors="coerce") if f"{pfx_l}sets" in df_side.columns else np.nan
+        # jeux par set (W1/L1...W5/L5 ou w1/l1...)
+        for s_i in range(1, 4):
+            for px in [pfx_w, pfx_l]:
+                for fmt in [f"{px}{s_i}", f"{px.upper()}{s_i}"]:
+                    if fmt in df_side.columns:
+                        df_side[f"games_{px}_{s_i}"] = pd.to_numeric(df_side[fmt], errors="coerce")
+                        break
+        return df_side
+
+    as_w = add_score_cols(as_w, True)
+    as_l = add_score_cols(as_l, False)
+
+    score_cols = [c for c in ["sets_w","sets_l",
+                               "games_w_1","games_l_1","games_w_2","games_l_2",
+                               "games_w_3","games_l_3"] if c in as_w.columns or c in as_l.columns]
+
     cols = ["tourney_date","surface","is_w","ace","df_c","svpt",
             "1stIn","1stWon","2ndWon","bpS","bpF","rank","rank_pts","age",
-            "o1stIn","o1stWon","o2ndWon"]
+            "o1stIn","o1stWon","o2ndWon"] + score_cols
 
-    all_m = pd.concat([as_w[cols], as_l[cols]], ignore_index=True
-                      ).sort_values("tourney_date", ascending=False)
+    # Ne garder que les colonnes qui existent dans les deux DataFrames
+    cols_w = [c for c in cols if c in as_w.columns]
+    cols_l = [c for c in cols if c in as_l.columns]
+    shared_cols = list(dict.fromkeys(cols_w + [c for c in cols_l if c not in cols_w]))
+
+    all_m = pd.concat([
+        as_w[[c for c in shared_cols if c in as_w.columns]],
+        as_l[[c for c in shared_cols if c in as_l.columns]]
+    ], ignore_index=True).sort_values("tourney_date", ascending=False)
     if all_m.empty:
         return None
 
@@ -673,6 +710,40 @@ def get_player_stats(df, player, surface=None, n_stats=15, n_form=5, fatigue_day
 
     wins = int(working["is_w"].sum()); played = len(working)
 
+    # ── Pondération temporelle (decay 180 jours) ────────────
+    import math
+    ref_date = all_m["tourney_date"].iloc[0]
+    def weighted_stat(col, denom_col=None):
+        rows = working[[col, "tourney_date"]].dropna(subset=[col])
+        if rows.empty: return None
+        weights = rows["tourney_date"].apply(
+            lambda d: math.exp(-abs((ref_date - d).days) / 180.0)
+        )
+        if denom_col and denom_col in working.columns:
+            denom_rows = working[[denom_col, "tourney_date"]].dropna(subset=[denom_col])
+            if not denom_rows.empty:
+                w2 = denom_rows["tourney_date"].apply(
+                    lambda d: math.exp(-abs((ref_date - d).days) / 180.0)
+                )
+                num = (rows[col] * weights).sum()
+                den = (denom_rows[denom_col] * w2).sum()
+                return float(num / den) if den > 0 else None
+        return float((rows[col] * weights).sum() / weights.sum())
+
+    # ── Surface win rate sur 2 ans ───────────────────────────
+    cutoff_2y = ref_date - pd.Timedelta(days=730)
+    if surface:
+        sm_2y = all_m[(all_m["surface"] == surface) & (all_m["tourney_date"] >= cutoff_2y)]
+    else:
+        sm_2y = all_m[all_m["tourney_date"] >= cutoff_2y]
+    surf_wr      = float(sm_2y["is_w"].sum() / len(sm_2y)) if len(sm_2y) >= 3 else None
+    surf_matches = len(sm_2y)
+
+    # ── Détection retour de blessure / longue absence ───────
+    today = pd.Timestamp.now()
+    days_since_last = (today - ref_date).days
+    is_returning = int(days_since_last > 30)
+
     return {
         "rank": rank, "rank_pts": rank_pts, "age": age,
         "form_pct": form_pct, "fatigue": fatigue,
@@ -687,7 +758,23 @@ def get_player_stats(df, player, surface=None, n_stats=15, n_form=5, fatigue_day
         "wins": wins, "played": played,
         "win_pct": wins/played if played > 0 else 0,
         "surf_note": surf_note,
-        "last_date": all_m["tourney_date"].iloc[0],
+        "last_date": ref_date,
+        "surf_wr": surf_wr,
+        "surf_matches": surf_matches,
+        "days_since_last": days_since_last,
+        "is_returning": is_returning,
+        # ── Stats sets / jeux ──────────────────────────────
+        "sets_won_pct":    float(working["sets_w"].sum() / (working["sets_w"].sum() + working["sets_l"].sum()))
+                           if "sets_w" in working.columns and working["sets_w"].notna().any() else None,
+        "avg_games_per_match": float((working.get("games_w_1", pd.Series([np.nan])).fillna(0) +
+                                      working.get("games_l_1", pd.Series([np.nan])).fillna(0) +
+                                      working.get("games_w_2", pd.Series([np.nan])).fillna(0) +
+                                      working.get("games_l_2", pd.Series([np.nan])).fillna(0) +
+                                      working.get("games_w_3", pd.Series([np.nan])).fillna(0) +
+                                      working.get("games_l_3", pd.Series([np.nan])).fillna(0)
+                                     ).mean()) if "games_w_1" in working.columns else None,
+        "first_set_win_pct": float((working["games_w_1"] > working["games_l_1"]).sum() / working["games_w_1"].notna().sum())
+                             if "games_w_1" in working.columns and working["games_w_1"].notna().sum() > 0 else None,
     }
 
 def get_h2h(df, j1, j2, surface=None):
@@ -824,10 +911,183 @@ def get_groq_analysis(j1, j2, s1, s2, h2h, surface, level, proba, tour):
     except Exception as e:
         return f"Analyse IA indisponible : {e}"
 
-def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level, n_features=21):
+# ─────────────────────────────────────────────────────────────
+# COTES BOOKMAKERS
+# ─────────────────────────────────────────────────────────────
+ODDS_API_KEY = "8090906fec7338245114345194fde760"
+ODDS_CACHE   = {}  # {cache_key: (timestamp, data)}
+ODDS_TTL     = 6 * 3600  # 6 heures
+
+def get_live_odds(j1, j2):
+    """Cherche les cotes live sur The Odds API pour un match ATP."""
+    import urllib.request, json as _json, time
+    cache_key = f"{j1.lower()}_{j2.lower()}"
+    now = time.time()
+    # Cache 6h
+    if cache_key in ODDS_CACHE:
+        ts, data = ODDS_CACHE[cache_key]
+        if now - ts < ODDS_TTL:
+            return data
+    try:
+        url = (
+            f"https://api.the-odds-api.com/v4/sports/tennis_atp/odds/"
+            f"?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "TennisIQ/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            events = _json.loads(r.read())
+        j1_low = j1.lower().split()
+        j2_low = j2.lower().split()
+        for ev in events:
+            home = ev.get("home_team","").lower()
+            away = ev.get("away_team","").lower()
+            match1 = any(w in home for w in j1_low) and any(w in away for w in j2_low)
+            match2 = any(w in away for w in j1_low) and any(w in home for w in j2_low)
+            if match1 or match2:
+                odds_j1, odds_j2 = [], []
+                for bk in ev.get("bookmakers", [])[:5]:
+                    for mkt in bk.get("markets", []):
+                        if mkt["key"] == "h2h":
+                            for out in mkt["outcomes"]:
+                                nm = out["name"].lower()
+                                if any(w in nm for w in j1_low):
+                                    odds_j1.append(out["price"])
+                                elif any(w in nm for w in j2_low):
+                                    odds_j2.append(out["price"])
+                if odds_j1 and odds_j2:
+                    result = {
+                        "found": True,
+                        "odds_j1": round(sum(odds_j1)/len(odds_j1), 2),
+                        "odds_j2": round(sum(odds_j2)/len(odds_j2), 2),
+                        "source": "live",
+                        "n_books": len(ev.get("bookmakers",[])),
+                    }
+                    ODDS_CACHE[cache_key] = (now, result)
+                    return result
+        result = {"found": False, "source": "live"}
+        ODDS_CACHE[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        return {"found": False, "source": "error", "error": str(e)}
+
+def implied_prob(odd):
+    """Convertit une cote décimale en probabilité implicite."""
+    return round(1.0 / odd, 4) if odd and odd > 1 else None
+
+def value_bet_analysis(model_proba, odds):
+    """Retourne l'analyse de value bet."""
+    impl = implied_prob(odds)
+    if impl is None: return None
+    edge = model_proba - impl
+    return {"implied": impl, "edge": edge, "is_value": edge > 0.04}
+
+# ─────────────────────────────────────────────────────────────
+# MARCHÉS ALTERNATIFS — Calculs statistiques
+# ─────────────────────────────────────────────────────────────
+def calc_first_set_winner(s1, s2, proba_match):
+    """
+    Probabilité que j1 gagne le 1er set.
+    Basé sur le first_set_win_pct historique + pondéré par la proba match.
+    """
+    fs1 = s1.get("first_set_win_pct")
+    fs2 = s2.get("first_set_win_pct")
+    # Si données disponibles : moyenne pondérée par proba match
+    if fs1 is not None and fs2 is not None:
+        raw = fs1 * 0.55 + (1 - fs2) * 0.45
+    elif fs1 is not None:
+        raw = fs1 * 0.6 + proba_match * 0.4
+    elif fs2 is not None:
+        raw = (1 - fs2) * 0.6 + proba_match * 0.4
+    else:
+        # Fallback : corrélation empirique avec proba match
+        # En ATP, le favori à 65% gagne ~62% des 1ers sets
+        raw = 0.5 + (proba_match - 0.5) * 0.75
+    return float(max(0.05, min(0.95, raw)))
+
+def calc_total_games(s1, s2, best_of, surface):
+    """
+    Estime le nombre total de jeux du match.
+    Utilise avg_games_per_match historique + facteur surface.
+    """
+    g1 = s1.get("avg_games_per_match")
+    g2 = s2.get("avg_games_per_match")
+    # Moyennes de référence ATP (jeux totaux) selon surface et best_of
+    defaults = {
+        ("Hard", 3): 22.5, ("Clay", 3): 24.0, ("Grass", 3): 21.5,
+        ("Hard", 5): 37.5, ("Clay", 5): 39.5, ("Grass", 5): 35.5,
+    }
+    base = defaults.get((surface, int(best_of)), 22.5)
+    if g1 is not None and g2 is not None:
+        avg = (g1 + g2) / 2
+        # Calibrage : avg_games_per_match inclut les deux joueurs
+        est = avg * 0.7 + base * 0.3
+    elif g1 is not None or g2 is not None:
+        avg = g1 if g1 is not None else g2
+        est = avg * 0.5 + base * 0.5
+    else:
+        est = base
+    return float(round(est, 1))
+
+def calc_handicap_sets(proba_match, best_of):
+    """
+    Probabilité que le favori gagne avec -1.5 sets (2-0 en BO3, 3-0/3-1 en BO5).
+    """
+    if best_of == 3:
+        # P(2-0) ≈ P(win)² ajusté
+        p_20 = proba_match ** 1.6 * 0.85
+    else:
+        # P(3-0) + P(3-1)
+        p_30 = proba_match ** 2.2 * 0.45
+        p_31 = proba_match ** 1.8 * (1 - proba_match) * 1.2
+        p_20 = min(p_30 + p_31, proba_match * 0.85)
+    return float(max(0.05, min(0.92, p_20)))
+
+def get_live_odds_markets(j1, j2):
+    """Récupère les cotes pour marchés alternatifs via Odds API."""
+    import urllib.request, json as _json, time
+    cache_key = f"mkt_{j1.lower()}_{j2.lower()}"
+    now = time.time()
+    if cache_key in ODDS_CACHE:
+        ts, data = ODDS_CACHE[cache_key]
+        if now - ts < ODDS_TTL:
+            return data
+    try:
+        # Marchés h2h + set_winner + totals
+        url = (
+            f"https://api.the-odds-api.com/v4/sports/tennis_atp/odds/"
+            f"?apiKey={ODDS_API_KEY}&regions=eu"
+            f"&markets=h2h,alternate_spreads,totals&oddsFormat=decimal"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "TennisIQ/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            events = _json.loads(r.read())
+        j1_low = j1.lower().split(); j2_low = j2.lower().split()
+        for ev in events:
+            home = ev.get("home_team","").lower()
+            away = ev.get("away_team","").lower()
+            if not ((any(w in home for w in j1_low) and any(w in away for w in j2_low)) or
+                    (any(w in away for w in j1_low) and any(w in home for w in j2_low))):
+                continue
+            result = {"found": True, "source": "live", "markets": {}}
+            for bk in ev.get("bookmakers", [])[:3]:
+                for mkt in bk.get("markets", []):
+                    k = mkt["key"]
+                    if k not in result["markets"]:
+                        result["markets"][k] = []
+                    result["markets"][k].extend(mkt.get("outcomes", []))
+            ODDS_CACHE[cache_key] = (now, result)
+            return result
+        result = {"found": False, "source": "live"}
+        ODDS_CACHE[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        return {"found": False, "source": "error", "error": str(e)}
+
+def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level, n_features=26):
     """
     Génère le vecteur de features.
-    n_features=21 : version complète (nouveaux modèles)
+    n_features=26 : version complète avec surf_wr + absence (nouveaux modèles)
+    n_features=21 : version sans surf_wr/absence (modèles précédents)
     n_features=18 : version sans niveau tournoi (anciens modèles)
     """
     def sd(k):
@@ -835,12 +1095,12 @@ def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level, n_features=21)
         if a is not None and b is not None and pd.notna(a) and pd.notna(b):
             return float(a)-float(b)
         return 0.0
+
     level_gs  = int(level in ("G","Grand Slam"))
     level_m   = int(level in ("M","Masters"))
     level_500 = int(level in ("500","A","P"))
-    # Challenger (level C) → traité comme ATP 250, level_500=0
 
-    # 18 features de base (compatibles avec anciens modèles)
+    # 18 features de base
     fv = [
         sd("rank"), sd("rank_pts"), sd("age"),
         sd("form_pct"), sd("fatigue"),
@@ -850,9 +1110,22 @@ def build_feature_vector(s1, s2, h2h_sc, surface, best_of, level, n_features=21)
         float(h2h_sc), float(best_of),
         int(surface=="Hard"), int(surface=="Clay"), int(surface=="Grass"),
     ]
-    # 3 features supplémentaires pour les nouveaux modèles (21 features)
-    if n_features == 21:
+    if n_features >= 21:
         fv += [level_gs, level_m, level_500]
+    if n_features >= 26:
+        # Surface win rate diff
+        a, b = s1.get("surf_wr"), s2.get("surf_wr")
+        surf_wr_diff = float(a - b) if (a is not None and b is not None and pd.notna(a) and pd.notna(b)) else 0.0
+        # Expérience surface diff
+        surf_m_diff = float((s1.get("surf_matches") or 0) - (s2.get("surf_matches") or 0))
+        # Jours depuis dernier match diff
+        d1 = s1.get("days_since_last") or 0
+        d2 = s2.get("days_since_last") or 0
+        days_diff = float(d1 - d2)
+        # Flags retour blessure
+        p1_ret = float(s1.get("is_returning") or 0)
+        p2_ret = float(s2.get("is_returning") or 0)
+        fv += [surf_wr_diff, surf_m_diff, days_diff, p1_ret, p2_ret]
     return fv
 
 # ─────────────────────────────────────────────────────────────
@@ -1130,6 +1403,8 @@ with tab_pred:
             {stat_html("2ND SERVE WON", s1['pct_2nd_won'], s2['pct_2nd_won'])}
             {stat_html("BP SAVED", s1['pct_bp_saved'], s2['pct_bp_saved'])}
             {stat_html("RETURN 1ST WON", s1['pct_ret_1st'], s2['pct_ret_1st'])}
+            {stat_html("SURF WIN RATE 2Y", s1.get('surf_wr'), s2.get('surf_wr'))}
+            {stat_html("DAYS SINCE MATCH", s1.get('days_since_last'), s2.get('days_since_last'), higher_is_better=False)}
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -1182,6 +1457,81 @@ with tab_pred:
         </div>
         """, unsafe_allow_html=True)
 
+    # ── COTES BOOKMAKERS ─────────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px;
+                text-transform:uppercase; margin-bottom:12px;">📊 Cotes Bookmakers</div>
+    """, unsafe_allow_html=True)
+
+    odds_mode = st.radio(
+        "Source des cotes", ["Aucune", "Saisie manuelle", "API live (Odds API)"],
+        horizontal=True, key="odds_mode", label_visibility="collapsed"
+    )
+
+    odds_j1_val, odds_j2_val = None, None
+
+    if odds_mode == "Saisie manuelle":
+        oc1, oc2 = st.columns(2)
+        with oc1:
+            raw1 = st.text_input(f"Cote {joueur1}", placeholder="ex: 1.75", key="odds_j1_manual")
+            try: odds_j1_val = float(raw1.replace(",",".")) if raw1.strip() else None
+            except: odds_j1_val = None
+        with oc2:
+            raw2 = st.text_input(f"Cote {joueur2}", placeholder="ex: 2.10", key="odds_j2_manual")
+            try: odds_j2_val = float(raw2.replace(",",".")) if raw2.strip() else None
+            except: odds_j2_val = None
+        if odds_j1_val and odds_j2_val:
+            impl1 = implied_prob(odds_j1_val)
+            impl2 = implied_prob(odds_j2_val)
+            vig   = (impl1 + impl2 - 1.0) * 100 if impl1 and impl2 else 0
+            st.markdown(f"""
+            <div style="font-size:0.75rem; color:#4a5e60; margin-top:4px;">
+                Prob. implicite : <span style="color:#c8c0b0;">{joueur1} {impl1:.1%}</span>
+                — <span style="color:#c8c0b0;">{joueur2} {impl2:.1%}</span>
+                — Marge bookmaker : <span style="color:#f5c842;">{vig:.1f}%</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    elif odds_mode == "API live (Odds API)":
+        if st.button("🔍 Charger les cotes live", key="btn_odds_api"):
+            with st.spinner("Recherche des cotes..."):
+                live = get_live_odds(joueur1, joueur2)
+            if live.get("found"):
+                st.session_state["odds_live_cache"] = live
+                st.session_state["odds_live_players"] = (joueur1, joueur2)
+        live_cached = st.session_state.get("odds_live_cache", {})
+        live_players = st.session_state.get("odds_live_players", (None, None))
+        if live_cached.get("found") and live_players == (joueur1, joueur2):
+            odds_j1_val = live_cached["odds_j1"]
+            odds_j2_val = live_cached["odds_j2"]
+            impl1 = implied_prob(odds_j1_val)
+            impl2 = implied_prob(odds_j2_val)
+            vig   = (impl1 + impl2 - 1.0) * 100 if impl1 and impl2 else 0
+            st.markdown(f"""
+            <div class="card" style="padding:14px 20px; border-color:#3dd68c22;">
+                <div style="display:flex; gap:32px; align-items:center; flex-wrap:wrap;">
+                    <div style="text-align:center;">
+                        <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px;">COTE {joueur1.split()[-1].upper()}</div>
+                        <div style="font-size:1.6rem; font-weight:700; color:#e8e0d0; font-family:'Playfair Display',serif;">{odds_j1_val}</div>
+                        <div style="font-size:0.72rem; color:#4a5e60;">{impl1:.1%} impl.</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px;">COTE {joueur2.split()[-1].upper()}</div>
+                        <div style="font-size:1.6rem; font-weight:700; color:#e8e0d0; font-family:'Playfair Display',serif;">{odds_j2_val}</div>
+                        <div style="font-size:0.72rem; color:#4a5e60;">{impl2:.1%} impl.</div>
+                    </div>
+                    <div style="font-size:0.72rem; color:#4a5e60;">
+                        {live_cached["n_books"]} bookmakers · marge {vig:.1f}%
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        elif live_cached.get("source") == "error":
+            st.caption(f"⚠️ API indisponible : {live_cached.get('error','')}")
+        elif live_cached.get("found") == False and live_cached.get("source") == "live":
+            st.caption("Match non trouvé dans les cotes live — essaie la saisie manuelle.")
+
     # ── PREDICT BUTTON ────────────────────────────────────────
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     col_btn = st.columns([1, 2, 1])
@@ -1204,7 +1554,7 @@ with tab_pred:
                     model_input = model.input_shape
                     n_model = model_input[-1] if isinstance(model_input, tuple) else model_input[0][-1]
                 except Exception:
-                    n_model = 21  # défaut nouveaux modèles
+                    n_model = 26  # défaut nouveaux modèles
 
                 # Générer le vecteur avec le bon nombre de features
                 fv = build_feature_vector(
@@ -1293,6 +1643,200 @@ with tab_pred:
                     """, unsafe_allow_html=True)
 
                 st.markdown("</div></div></div>", unsafe_allow_html=True)
+
+                # ── Value Bet Analysis ───────────────────────
+                if odds_j1_val or odds_j2_val:
+                    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                    st.markdown("""
+                    <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px;
+                                text-transform:uppercase; margin-bottom:12px;">📈 Value Bet Analysis</div>
+                    """, unsafe_allow_html=True)
+                    vb1 = value_bet_analysis(proba, odds_j1_val) if odds_j1_val else None
+                    vb2 = value_bet_analysis(1 - proba, odds_j2_val) if odds_j2_val else None
+                    vbc1, vbc2 = st.columns(2)
+                    for col_v, player_n, vb, odd in [
+                        (vbc1, joueur1, vb1, odds_j1_val),
+                        (vbc2, joueur2, vb2, odds_j2_val)
+                    ]:
+                        if vb is None: continue
+                        with col_v:
+                            edge_color = "#3dd68c" if vb["is_value"] else "#e07878"
+                            edge_label = "✅ VALUE BET" if vb["is_value"] else "❌ No value"
+                            edge_pct   = vb["edge"] * 100
+                            st.markdown(f"""
+                            <div class="card" style="padding:16px 20px; border-color:{edge_color}44; text-align:center;">
+                                <div style="font-size:0.75rem; color:#4a5e60; margin-bottom:6px;">{player_n.split()[-1].upper()}</div>
+                                <div style="font-size:1.4rem; font-weight:700; color:#e8e0d0; font-family:'Playfair Display',serif;">
+                                    {odd} <span style="font-size:0.8rem; color:#4a5e60;">cote</span>
+                                </div>
+                                <div style="margin:8px 0; font-size:0.78rem; color:#c8c0b0;">
+                                    Modèle : {proba if player_n==joueur1 else 1-proba:.1%} &nbsp;|&nbsp;
+                                    Bookmaker : {vb["implied"]:.1%}
+                                </div>
+                                <div style="font-size:0.85rem; font-weight:700; color:{edge_color};">
+                                    {edge_label} &nbsp; ({edge_pct:+.1f}%)
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                # ── Marchés alternatifs ──────────────────────
+                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                st.markdown("""
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+                    <div style="font-family:'Playfair Display',serif; font-size:1.15rem;
+                                font-weight:700; color:#e8e0d0;">Marchés Alternatifs</div>
+                    <div style="font-size:0.65rem; color:#4a90d9; letter-spacing:3px;
+                                text-transform:uppercase; border:1px solid #4a90d944;
+                                padding:3px 10px; border-radius:20px;">PARIS</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                fav_name  = joueur1 if proba >= 0.5 else joueur2
+                dog_name  = joueur2 if proba >= 0.5 else joueur1
+                proba_fav = proba if proba >= 0.5 else 1 - proba
+
+                # Calculs
+                p_fs  = calc_first_set_winner(s1, s2, proba)
+                total = calc_total_games(s1, s2, best_of, surface)
+                p_hcp = calc_handicap_sets(proba_fav, best_of)
+                hcp_label = "-1.5 sets" if best_of == 3 else "-2.5 sets"
+
+                # Section cotes pour marchés alternatifs
+                with st.expander("📊 Entrer les cotes pour ces marchés", expanded=False):
+                    mkt_col1, mkt_col2, mkt_col3 = st.columns(3)
+                    with mkt_col1:
+                        st.markdown('<div style="font-size:0.7rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">1er Set — Cotes</div>', unsafe_allow_html=True)
+                        fs_odd_j1 = st.text_input(f"{joueur1}", key="fs_odd1", placeholder="ex: 1.65")
+                        fs_odd_j2 = st.text_input(f"{joueur2}", key="fs_odd2", placeholder="ex: 2.20")
+                    with mkt_col2:
+                        st.markdown('<div style="font-size:0.7rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Total Jeux — Cotes</div>', unsafe_allow_html=True)
+                        tg_line  = st.text_input("Ligne (ex: 22.5)", key="tg_line", placeholder="22.5")
+                        tg_over  = st.text_input("Over", key="tg_over", placeholder="ex: 1.90")
+                        tg_under = st.text_input("Under", key="tg_under", placeholder="ex: 1.90")
+                    with mkt_col3:
+                        st.markdown(f'<div style="font-size:0.7rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Handicap {hcp_label} — Cotes</div>', unsafe_allow_html=True)
+                        hcp_fav  = st.text_input(f"{fav_name} {hcp_label}", key="hcp_fav", placeholder="ex: 1.80")
+                        hcp_dog  = st.text_input(f"{dog_name} +{hcp_label[1:]}", key="hcp_dog", placeholder="ex: 2.00")
+
+                    # Charger via API
+                    if st.button("🔍 Charger marchés live (API)", key="btn_mkt_api"):
+                        with st.spinner("Recherche..."):
+                            mkt_live = get_live_odds_markets(joueur1, joueur2)
+                        st.session_state["mkt_live"] = mkt_live
+                        if mkt_live.get("found"):
+                            st.success(f"Marchés trouvés · {len(mkt_live.get('markets',{}))} types")
+                        else:
+                            st.caption("Marchés non disponibles — utilise la saisie manuelle.")
+
+                def parse_odd(s):
+                    try: return float(str(s).replace(",",".").strip()) if s and str(s).strip() else None
+                    except: return None
+
+                # ── Cards marchés ─────────────────────────────
+                mc1, mc2, mc3 = st.columns(3)
+
+                # ── 1er SET ───────────────────────────────────
+                with mc1:
+                    st.markdown(f"""
+                    <div class="card" style="padding:18px 20px; min-height:160px;">
+                        <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:3px;
+                                    text-transform:uppercase; margin-bottom:12px;">🎾 Vainqueur 1er Set</div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <span style="font-size:0.82rem; color:#c8c0b0;">{joueur1}</span>
+                            <span style="font-size:1.1rem; font-weight:700;
+                                         color:{'#3dd68c' if p_fs>=0.5 else '#e8e0d0'};">{p_fs:.1%}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+                            <span style="font-size:0.82rem; color:#c8c0b0;">{joueur2}</span>
+                            <span style="font-size:1.1rem; font-weight:700;
+                                         color:{'#3dd68c' if p_fs<0.5 else '#e8e0d0'};">{1-p_fs:.1%}</span>
+                        </div>
+                        <div style="font-size:0.68rem; color:#4a5e60; font-style:italic;">
+                            Basé sur historique 1er set + corrélation match
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    # Value bet 1er set
+                    o1 = parse_odd(fs_odd_j1); o2 = parse_odd(fs_odd_j2)
+                    if o1:
+                        vb = value_bet_analysis(p_fs, o1)
+                        if vb:
+                            c = "#3dd68c" if vb["is_value"] else "#e07878"
+                            st.markdown(f'<div style="font-size:0.75rem; color:{c}; margin-top:4px; text-align:center;">{"✅ VALUE" if vb["is_value"] else "❌ No value"} · cote {o1} · edge {vb["edge"]*100:+.1f}%</div>', unsafe_allow_html=True)
+                    if o2:
+                        vb = value_bet_analysis(1-p_fs, o2)
+                        if vb:
+                            c = "#3dd68c" if vb["is_value"] else "#e07878"
+                            st.markdown(f'<div style="font-size:0.75rem; color:{c}; margin-top:4px; text-align:center;">{"✅ VALUE" if vb["is_value"] else "❌ No value"} · cote {o2} · edge {vb["edge"]*100:+.1f}%</div>', unsafe_allow_html=True)
+
+                # ── TOTAL JEUX ────────────────────────────────
+                with mc2:
+                    tg_line_val = parse_odd(tg_line) or total
+                    p_over  = max(0.05, min(0.95, 0.5 + (total - tg_line_val) * 0.06))
+                    p_under = 1 - p_over
+                    st.markdown(f"""
+                    <div class="card" style="padding:18px 20px; min-height:160px;">
+                        <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:3px;
+                                    text-transform:uppercase; margin-bottom:12px;">📊 Total Jeux</div>
+                        <div style="font-size:1.6rem; font-weight:900; color:#e8e0d0;
+                                    font-family:'Playfair Display',serif; text-align:center;
+                                    margin-bottom:8px;">{total}</div>
+                        <div style="font-size:0.72rem; color:#4a5e60; text-align:center;
+                                    margin-bottom:10px;">jeux estimés</div>
+                        <div style="display:flex; justify-content:space-around;">
+                            <div style="text-align:center;">
+                                <div style="font-size:0.65rem; color:#4a5e60;">OVER {tg_line_val}</div>
+                                <div style="font-size:1rem; font-weight:700;
+                                             color:{'#3dd68c' if p_over>=0.5 else '#c8c0b0'};">{p_over:.1%}</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:0.65rem; color:#4a5e60;">UNDER {tg_line_val}</div>
+                                <div style="font-size:1rem; font-weight:700;
+                                             color:{'#3dd68c' if p_under>=0.5 else '#c8c0b0'};">{p_under:.1%}</div>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    # Value bet total jeux
+                    ov = parse_odd(tg_over); un = parse_odd(tg_under)
+                    for lbl, p_v, odd_v in [("Over", p_over, ov), ("Under", p_under, un)]:
+                        if odd_v:
+                            vb = value_bet_analysis(p_v, odd_v)
+                            if vb:
+                                c = "#3dd68c" if vb["is_value"] else "#e07878"
+                                st.markdown(f'<div style="font-size:0.75rem; color:{c}; margin-top:4px; text-align:center;">{lbl} {"✅ VALUE" if vb["is_value"] else "❌"} · cote {odd_v} · {vb["edge"]*100:+.1f}%</div>', unsafe_allow_html=True)
+
+                # ── HANDICAP SETS ─────────────────────────────
+                with mc3:
+                    p_hcp_dog = 1 - p_hcp
+                    st.markdown(f"""
+                    <div class="card" style="padding:18px 20px; min-height:160px;">
+                        <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:3px;
+                                    text-transform:uppercase; margin-bottom:12px;">⚖️ Handicap Sets</div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <span style="font-size:0.8rem; color:#c8c0b0;">{fav_name} {hcp_label}</span>
+                            <span style="font-size:1.1rem; font-weight:700;
+                                         color:{'#3dd68c' if p_hcp>=0.5 else '#e8e0d0'};">{p_hcp:.1%}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+                            <span style="font-size:0.8rem; color:#c8c0b0;">{dog_name} +{hcp_label[1:]}</span>
+                            <span style="font-size:1.1rem; font-weight:700;
+                                         color:{'#3dd68c' if p_hcp_dog>=0.5 else '#e8e0d0'};">{p_hcp_dog:.1%}</span>
+                        </div>
+                        <div style="font-size:0.68rem; color:#4a5e60; font-style:italic;">
+                            {'Best of 3 — victoire 2-0 requise' if best_of==3 else 'Best of 5 — victoire 3-0 ou 3-1'}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    # Value bet handicap
+                    hf = parse_odd(hcp_fav); hd = parse_odd(hcp_dog)
+                    for lbl, p_v, odd_v in [(f"{fav_name} {hcp_label}", p_hcp, hf),
+                                            (f"{dog_name} +{hcp_label[1:]}", p_hcp_dog, hd)]:
+                        if odd_v:
+                            vb = value_bet_analysis(p_v, odd_v)
+                            if vb:
+                                c = "#3dd68c" if vb["is_value"] else "#e07878"
+                                st.markdown(f'<div style="font-size:0.75rem; color:{c}; margin-top:4px; text-align:center;">{"✅ VALUE" if vb["is_value"] else "❌"} · cote {odd_v} · {vb["edge"]*100:+.1f}%</div>', unsafe_allow_html=True)
 
                 # ── Feature vector debug ──────────────────────
                 with st.expander("Feature vector details"):
@@ -1461,7 +2005,7 @@ with tab_multi:
                     try:
                         n_model_mm = model_mm.input_shape[-1]
                     except Exception:
-                        n_model_mm = 21
+                        n_model_mm = 26
 
                     s1_mm = get_player_stats(atp_data, j1, mm_surface)
                     s2_mm = get_player_stats(atp_data, j2, mm_surface)
