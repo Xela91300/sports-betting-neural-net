@@ -40,7 +40,7 @@ FEATURES = [
 SURFACES   = ["Hard", "Clay", "Grass"]
 TOURS      = {"ATP": "atp", "WTA": "wta"}
 ATP_ONLY   = True   # Mettre False pour réactiver WTA
-START_YEAR = 1998   # Données depuis cette année
+START_YEAR = 2007   # Données depuis cette année
 
 # ── Liste des tournois ATP avec surface et niveau automatiques ─
 TOURNAMENTS_ATP = [
@@ -1270,7 +1270,7 @@ with st.sidebar:
 st.markdown("""
 <div style="padding: 32px 0 24px 0;">
     <p class="hero-title">TennisIQ</p>
-    <p class="hero-sub">Neural Network Prediction Engine · ATP 1998–2026</p>
+    <p class="hero-sub">Neural Network Prediction Engine · ATP 2007–2026</p>
 </div>
 <div class="divider"></div>
 """, unsafe_allow_html=True)
