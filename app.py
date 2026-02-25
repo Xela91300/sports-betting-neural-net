@@ -18,18 +18,7 @@ nest_asyncio.apply()  # Important pour éviter les conflits asyncio
 warnings.filterwarnings('ignore')
 
 # ─────────────────────────────────────────────────────────────
-# CONFIGURATION (À MODIFIER ICI DIRECTEMENT)
-# ─────────────────────────────────────────────────────────────
-
-# Configuration Telegram - À REMPLACER AVEC TES VRAIES VALEURS
-TELEGRAM_BOT_TOKEN = "8674866189:AAH37S6h5jizMBpi4Tc55T5FpKU-98Qe0jQ"  # Ton token
-TELEGRAM_CHAT_ID = "5213471678"  # Ton chat ID (pour groupe, mettre le tiret devant ex: "-123456789")
-
-# Configuration Groq (optionnel)
-GROQ_API_KEY = ""  # Ta clé Groq si tu en as une
-
-# ─────────────────────────────────────────────────────────────
-# TELEGRAM INTEGRATION
+# TELEGRAM INTEGRATION AVEC SECRETS
 # ─────────────────────────────────────────────────────────────
 try:
     from telegram import Bot
@@ -39,15 +28,18 @@ except ImportError:
     TELEGRAM_AVAILABLE = False
 
 def get_telegram_config():
-    """Récupère la config Telegram depuis les variables"""
-    # Priorité aux variables d'environnement
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN)
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
-    
-    # Ne retourner que si les deux sont présents
-    if token and chat_id:
+    """Récupère la config Telegram depuis les secrets Streamlit"""
+    try:
+        token = st.secrets["TELEGRAM_BOT_TOKEN"]
+        chat_id = st.secrets["TELEGRAM_CHAT_ID"]
         return token, chat_id
-    return None, None
+    except Exception as e:
+        # En cas d'erreur, essayer les variables d'environnement (fallback)
+        token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+        if token and chat_id:
+            return token, chat_id
+        return None, None
 
 async def send_telegram_message_async(message, parse_mode='HTML'):
     """Envoie un message Telegram de façon asynchrone"""
@@ -262,12 +254,12 @@ def test_telegram_connection():
     token, chat_id = get_telegram_config()
     
     if not token or not chat_id:
-        return False, "❌ Configuration Telegram manquante"
+        return False, "❌ Configuration Telegram manquante (secrets non trouvés)"
     
     test_message = """
 <b>🔧 TEST DE CONNEXION RÉUSSI!</b>
 
-✅ Bot configuré correctement
+✅ Bot configuré correctement avec les secrets
 📱 Prêt à recevoir des prédictions
 🤖 TennisIQ Bot actif
 
@@ -555,7 +547,7 @@ def load_css():
 load_css()
 
 # ─────────────────────────────────────────────────────────────
-# GESTION DES APIS
+# GESTION DES APIS AVEC SECRETS
 # ─────────────────────────────────────────────────────────────
 try:
     from groq import Groq
@@ -564,9 +556,11 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 def get_groq_key():
-    """Récupère la clé Groq depuis les variables d'environnement ou la config directe"""
-    # Priorité aux variables d'environnement
-    return os.environ.get("GROQ_API_KEY", GROQ_API_KEY)
+    """Récupère la clé Groq depuis les secrets"""
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except:
+        return os.environ.get("GROQ_API_KEY", None)
 
 def call_groq_api(prompt):
     if not GROQ_AVAILABLE:
@@ -682,7 +676,7 @@ def load_atp_data():
 
 # ─────────────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════
-# MACHINE LEARNING - CŒUR DU SYSTÈME (VERSION CORRIGÉE)
+# MACHINE LEARNING - CŒUR DU SYSTÈME
 # ══════════════════════════════════════════════════════════════
 # ─────────────────────────────────────────────────────────────
 
@@ -807,7 +801,7 @@ def precompute_player_stats_ml(_df):
                 if len(l_vals) > 0:
                     vals.extend(l_vals.tolist())
             
-            # CORRECTION : vérification robuste des valeurs
+            # Vérification robuste des valeurs
             if vals and len(vals) > 0:
                 # Convertir en numérique et filtrer les valeurs valides
                 numeric_vals = []
@@ -2389,7 +2383,7 @@ def show_multimatches(atp_data):
                         vb_txt = "Aucun value bet"
                     prompt = (f"Analyse ce match ATP : {result['player1']} vs {result['player2']} "
                               f"sur {result['surface']}. Proba ML : {result['player1']} {result['proba']:.1%} | "
-                              f{result['player2']} {1-result['proba']:.1%}. {vb_txt}. 3 points clés en français.")
+                              f"{result['player2']} {1-result['proba']:.1%}. {vb_txt}. 3 points clés en français.")
                     with st.spinner(f"Analyse match {result['match']}..."):
                         analysis = call_groq_api(prompt)
                     if analysis:
@@ -2879,9 +2873,28 @@ def show_configuration():
         with col_t3:
             if st.button("📋 Copier aide", use_container_width=True):
                 st.info("""
-                Pour configurer Telegram, modifie les variables au début du fichier :
-                TELEGRAM_BOT_TOKEN = "ton_token"
-                TELEGRAM_CHAT_ID = "ton_chat_id"
+                **Comment configurer Telegram :**
+                1. Va sur Telegram et cherche `@BotFather`
+                2. Envoie `/newbot` et suis les instructions
+                3. Récupère le token donné par BotFather
+                4. Cherche `@userinfobot` et obtiens ton Chat ID
+                5. Ajoute ces informations dans les secrets Streamlit :
+                
+                **Pour Streamlit Cloud :**
+                - Va dans ton app → Manage app → Settings → Secrets
+                - Ajoute :
+                
+                ```toml
+                TELEGRAM_BOT_TOKEN = "ton_token_ici"
+                TELEGRAM_CHAT_ID = "ton_chat_id_ici"
+                GROQ_API_KEY = "ta_clé_groq"  # Optionnel
+                ```
+                
+                **Pour le développement local :**
+                - Crée un fichier `.streamlit/secrets.toml` avec le même contenu
+                - Ajoute `.streamlit/` à ton `.gitignore`
+                
+                Pour un groupe, mets le tiret devant l'ID : `-123456789`
                 """)
     else:
         st.warning("⚠️ Telegram non configuré")
@@ -2891,14 +2904,9 @@ def show_configuration():
         2. Envoie `/newbot` et suis les instructions
         3. Récupère le token donné par BotFather
         4. Cherche `@userinfobot` et obtiens ton Chat ID
-        5. Modifie les variables au début du fichier :
+        5. Ajoute ces informations dans les secrets Streamlit.
         
-        ```python
-        TELEGRAM_BOT_TOKEN = "ton_token_ici"
-        TELEGRAM_CHAT_ID = "ton_chat_id_ici"
-        ```
-        
-        Pour un groupe, mets le tiret devant l'ID : `-123456789`
+        Voir le bouton "Copier aide" pour plus de détails.
         """)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
