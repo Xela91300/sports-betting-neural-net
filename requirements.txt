@@ -9,3 +9,7 @@ joblib
 groq
 plotly
 Pillow
+requests
+tqdm>
+python-dateutil
+openpyxl
