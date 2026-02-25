@@ -413,7 +413,7 @@ def load_atp_data():
 
 # ─────────────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════
-# MACHINE LEARNING - CŒUR DU SYSTÈME
+# MACHINE LEARNING - CŒUR DU SYSTÈME (VERSION CORRIGÉE)
 # ══════════════════════════════════════════════════════════════
 # ─────────────────────────────────────────────────────────────
 
@@ -459,7 +459,7 @@ def precompute_player_stats_ml(_df):
     stats = {}
 
     for player in all_players:
-        if not player or player == 'nan':
+        if not player or player == 'nan' or player == '':
             continue
 
         w_mask = df['_w_name'] == player
@@ -516,29 +516,54 @@ def precompute_player_stats_ml(_df):
 
         # ── Stats de service moyennes (carrière) ──
         serve_cols_map = {
-            'ace': ('w_ace', 'l_ace'), 'df': ('w_df', 'l_df'),
-            'svpt': ('w_svpt', 'l_svpt'), '1stIn': ('w_1stIn', 'l_1stIn'),
-            '1stWon': ('w_1stWon', 'l_1stWon'), '2ndWon': ('w_2ndWon', 'l_2ndWon'),
-            'bpSaved': ('w_bpSaved', 'l_bpSaved'), 'bpFaced': ('w_bpFaced', 'l_bpFaced'),
-            'SvGms': ('w_SvGms', 'l_SvGms'),
+            'ace': ('w_ace', 'l_ace'), 
+            'df': ('w_df', 'l_df'),
+            'svpt': ('w_svpt', 'l_svpt'), 
+            '1stIn': ('w_1stIn', 'l_1stIn'),
+            '1stWon': ('w_1stWon', 'l_1stWon'), 
+            '2ndWon': ('w_2ndWon', 'l_2ndWon'),
+            'bpSaved': ('w_bpSaved', 'l_bpSaved'), 
+            'bpFaced': ('w_bpFaced', 'l_bpFaced'),
         }
+        
         serve_raw = {}
         for stat, (wc, lc) in serve_cols_map.items():
             vals = []
             if wc in df.columns:
-                vals.extend(wins_df[wc].dropna().tolist())
+                w_vals = wins_df[wc].dropna()
+                if len(w_vals) > 0:
+                    vals.extend(w_vals.tolist())
             if lc in df.columns:
-                vals.extend(loss_df[lc].dropna().tolist())
-            serve_raw[stat] = float(np.mean(vals)) if vals else 0.0
+                l_vals = loss_df[lc].dropna()
+                if len(l_vals) > 0:
+                    vals.extend(l_vals.tolist())
+            
+            # CORRECTION : vérification robuste des valeurs
+            if vals and len(vals) > 0:
+                # Convertir en numérique et filtrer les valeurs valides
+                numeric_vals = []
+                for v in vals:
+                    try:
+                        if pd.notna(v) and v is not None:
+                            numeric_vals.append(float(v))
+                    except:
+                        continue
+                if numeric_vals:
+                    serve_raw[stat] = float(np.mean(numeric_vals))
+                else:
+                    serve_raw[stat] = 0.0
+            else:
+                serve_raw[stat] = 0.0
 
-        # Calculer les pourcentages
-        svpt = max(serve_raw.get('svpt', 1), 1)
-        in1st = serve_raw.get('1stIn', 0)
+        # Calculer les pourcentages avec sécurité
+        svpt = max(float(serve_raw.get('svpt', 1)), 1)
+        in1st = float(serve_raw.get('1stIn', 0))
+        
         serve_pct = {
-            'pct_1st_in': in1st / svpt,
+            'pct_1st_in': in1st / svpt if svpt > 0 else 0.0,
             'pct_1st_won': serve_raw['1stWon'] / in1st if in1st > 0 else 0.0,
-            'pct_2nd_won': serve_raw['2ndWon'] / max(svpt - in1st, 1),
-            'pct_bp_saved': serve_raw['bpSaved'] / max(serve_raw['bpFaced'], 1),
+            'pct_2nd_won': serve_raw['2ndWon'] / max(svpt - in1st, 1) if (svpt - in1st) > 0 else 0.0,
+            'pct_bp_saved': serve_raw['bpSaved'] / max(serve_raw['bpFaced'], 1) if serve_raw['bpFaced'] > 0 else 0.0,
             'ace_per_match': serve_raw['ace'],
             'df_per_match': serve_raw['df'],
         }
@@ -556,7 +581,7 @@ def precompute_player_stats_ml(_df):
                 pass
         if len(player_all) >= 5:
             last_20 = player_all.tail(20)
-            recent_form = float(last_20['_result'].mean())
+            recent_form = float(last_20['_result'].mean()) if len(last_20) > 0 else 0.5
 
         stats[player] = {
             'rank': rank or 500.0,
@@ -1184,11 +1209,16 @@ def main():
     with st.spinner("Chargement des données..."):
         atp_data = load_atp_data()
 
-    # Préchargement des stats joueurs en session state
+    # Préchargement des stats joueurs en session state (avec gestion d'erreur)
     if atp_data is not None and st.session_state.get('player_stats_cache') is None:
         with st.spinner("🔄 Calcul des statistiques avancées..."):
-            st.session_state['player_stats_cache'] = precompute_player_stats_ml(atp_data)
-            st.session_state['player_stats_cache_rows'] = len(atp_data)
+            try:
+                st.session_state['player_stats_cache'] = precompute_player_stats_ml(atp_data)
+                st.session_state['player_stats_cache_rows'] = len(atp_data)
+            except Exception as e:
+                st.warning(f"⚠️ Erreur lors du calcul des stats avancées: {str(e)}")
+                st.session_state['player_stats_cache'] = {}
+                st.session_state['player_stats_cache_rows'] = 0
 
     with st.sidebar:
         st.markdown("""
