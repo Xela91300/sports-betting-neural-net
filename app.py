@@ -80,6 +80,13 @@ COLORS = {
     "surface_grass": "#00DFA2",
 }
 
+# NOUVELLES CONSTANTES POUR LES LIMITES
+MAX_MATCHES_ANALYSIS = 30  # Nombre maximum de matchs pour l'analyse
+MAX_MATCHES_COMBINE = 30    # Nombre maximum de matchs pour le combiné
+MIN_PROBA_COMBINE = 0.55    # Probabilité minimale pour une sélection
+MIN_EDGE_COMBINE = 0.02     # Edge minimum pour une sélection
+MAX_SELECTIONS_COMBINE = 30 # Nombre maximum de sélections dans le combiné
+
 # Configuration des surfaces
 SURFACE_CONFIG = {
     "Hard": {
@@ -922,7 +929,7 @@ def create_stat_row(key, value, value_color=COLORS["white"]):
     """
 
 # ─────────────────────────────────────────────────────────────
-# CHARGEMENT DES DONNÉES ATP UNIQUEMENT (SANS AFFICHAGE)
+# CHARGEMENT DES DONNÉES ATP UNIQUEMENT
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_atp_data():
@@ -978,6 +985,9 @@ def get_player_stats(df, player, surface=None, n_matches=20):
     if df is None or player is None:
         return None
     
+    # Nettoyer le nom du joueur
+    player_clean = player.strip() if isinstance(player, str) else player
+    
     # Vérifier les colonnes disponibles
     winner_col = 'winner_name' if 'winner_name' in df.columns else None
     loser_col = 'loser_name' if 'loser_name' in df.columns else None
@@ -985,17 +995,21 @@ def get_player_stats(df, player, surface=None, n_matches=20):
     if not winner_col or not loser_col:
         return None
     
+    # Nettoyer les noms dans le dataframe pour la comparaison
+    df_winner_clean = df[winner_col].astype(str).str.strip()
+    df_loser_clean = df[loser_col].astype(str).str.strip()
+    
     # Filtrer les matchs du joueur
-    matches = df[(df[winner_col] == player) | (df[loser_col] == player)].copy()
+    matches = df[(df_winner_clean == player_clean) | (df_loser_clean == player_clean)].copy()
     if len(matches) == 0:
         return None
     
     # Statistiques de base
     stats = {
-        'name': player,
+        'name': player_clean,
         'matches_played': len(matches),
-        'wins': len(matches[matches[winner_col] == player]),
-        'losses': len(matches[matches[loser_col] == player]),
+        'wins': len(matches[df_winner_clean == player_clean]),
+        'losses': len(matches[df_loser_clean == player_clean]),
     }
     
     # Win rate
@@ -1008,22 +1022,30 @@ def get_h2h_stats(df, player1, player2):
     if df is None or player1 is None or player2 is None:
         return None
     
+    # Nettoyer les noms
+    player1_clean = player1.strip() if isinstance(player1, str) else player1
+    player2_clean = player2.strip() if isinstance(player2, str) else player2
+    
     winner_col = 'winner_name' if 'winner_name' in df.columns else None
     loser_col = 'loser_name' if 'loser_name' in df.columns else None
     
     if not winner_col or not loser_col:
         return None
     
-    h2h = df[((df[winner_col] == player1) & (df[loser_col] == player2)) |
-             ((df[winner_col] == player2) & (df[loser_col] == player1))].copy()
+    # Nettoyer les noms dans le dataframe
+    df_winner_clean = df[winner_col].astype(str).str.strip()
+    df_loser_clean = df[loser_col].astype(str).str.strip()
+    
+    h2h = df[((df_winner_clean == player1_clean) & (df_loser_clean == player2_clean)) |
+             ((df_winner_clean == player2_clean) & (df_loser_clean == player1_clean))].copy()
     
     if len(h2h) == 0:
         return None
     
     stats = {
         'total_matches': len(h2h),
-        f'{player1}_wins': len(h2h[h2h[winner_col] == player1]),
-        f'{player2}_wins': len(h2h[h2h[winner_col] == player2]),
+        f'{player1_clean}_wins': len(h2h[df_winner_clean == player1_clean]),
+        f'{player2_clean}_wins': len(h2h[df_winner_clean == player2_clean]),
     }
     
     return stats
@@ -1171,7 +1193,7 @@ def main():
     <div class="divider"></div>
     """, unsafe_allow_html=True)
     
-    # Chargement des données ATP uniquement (sans affichage)
+    # Chargement des données ATP uniquement
     with st.spinner("Chargement des données..."):
         atp_data = load_atp_data()
     
@@ -1305,7 +1327,7 @@ def show_dashboard(atp_data):
         st.info("Aucune prédiction pour le moment. Commence par en faire une !")
 
 # ─────────────────────────────────────────────────────────────
-# PRÉDICTIONS
+# PRÉDICTIONS (CORRIGÉ AVEC STRIP)
 # ─────────────────────────────────────────────────────────────
 def show_predictions(atp_data):
     """Affiche l'interface de prédiction simple"""
@@ -1440,97 +1462,30 @@ def show_predictions(atp_data):
                 st.info("Aucun face-à-face")
 
 # ─────────────────────────────────────────────────────────────
-# FONCTION get_player_stats (à mettre à jour aussi)
-# ─────────────────────────────────────────────────────────────
-def get_player_stats(df, player, surface=None, n_matches=20):
-    """Calcule les statistiques d'un joueur"""
-    if df is None or player is None:
-        return None
-    
-    # Nettoyer le nom du joueur
-    player_clean = player.strip() if isinstance(player, str) else player
-    
-    # Vérifier les colonnes disponibles
-    winner_col = 'winner_name' if 'winner_name' in df.columns else None
-    loser_col = 'loser_name' if 'loser_name' in df.columns else None
-    
-    if not winner_col or not loser_col:
-        return None
-    
-    # Nettoyer les noms dans le dataframe pour la comparaison
-    df_winner_clean = df[winner_col].astype(str).str.strip()
-    df_loser_clean = df[loser_col].astype(str).str.strip()
-    
-    # Filtrer les matchs du joueur
-    matches = df[(df_winner_clean == player_clean) | (df_loser_clean == player_clean)].copy()
-    if len(matches) == 0:
-        return None
-    
-    # Statistiques de base
-    stats = {
-        'name': player_clean,
-        'matches_played': len(matches),
-        'wins': len(matches[df_winner_clean == player_clean]),
-        'losses': len(matches[df_loser_clean == player_clean]),
-    }
-    
-    # Win rate
-    stats['win_rate'] = stats['wins'] / stats['matches_played'] if stats['matches_played'] > 0 else 0
-    
-    return stats
-
-# ─────────────────────────────────────────────────────────────
-# FONCTION get_h2h_stats (à mettre à jour aussi)
-# ─────────────────────────────────────────────────────────────
-def get_h2h_stats(df, player1, player2):
-    """Calcule les statistiques H2H"""
-    if df is None or player1 is None or player2 is None:
-        return None
-    
-    # Nettoyer les noms
-    player1_clean = player1.strip() if isinstance(player1, str) else player1
-    player2_clean = player2.strip() if isinstance(player2, str) else player2
-    
-    winner_col = 'winner_name' if 'winner_name' in df.columns else None
-    loser_col = 'loser_name' if 'loser_name' in df.columns else None
-    
-    if not winner_col or not loser_col:
-        return None
-    
-    # Nettoyer les noms dans le dataframe
-    df_winner_clean = df[winner_col].astype(str).str.strip()
-    df_loser_clean = df[loser_col].astype(str).str.strip()
-    
-    h2h = df[((df_winner_clean == player1_clean) & (df_loser_clean == player2_clean)) |
-             ((df_winner_clean == player2_clean) & (df_loser_clean == player1_clean))].copy()
-    
-    if len(h2h) == 0:
-        return None
-    
-    stats = {
-        'total_matches': len(h2h),
-        f'{player1_clean}_wins': len(h2h[df_winner_clean == player1_clean]),
-        f'{player2_clean}_wins': len(h2h[df_winner_clean == player2_clean]),
-    }
-    
-    return stats
-
-# ─────────────────────────────────────────────────────────────
-# MULTI-MATCHS
+# MULTI-MATCHS (MODIFIÉ AVEC MAX 30)
 # ─────────────────────────────────────────────────────────────
 def show_multimatches(atp_data):
-    """Affiche l'interface multi-matchs"""
+    """Affiche l'interface multi-matchs avec max 30 matchs"""
     
     st.markdown("<h2>📊 Multi-matchs</h2>", unsafe_allow_html=True)
     
-    # Configuration
+    # Configuration avec max 30 matchs
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        n_matches = st.number_input("Nombre de matchs", min_value=2, max_value=10, value=3)
+        n_matches = st.number_input(
+            "Nombre de matchs", 
+            min_value=2, 
+            max_value=MAX_MATCHES_ANALYSIS, 
+            value=min(5, MAX_MATCHES_ANALYSIS),
+            help=f"Maximum {MAX_MATCHES_ANALYSIS} matchs"
+        )
     
     with col2:
         use_ai = st.checkbox("Activer l'analyse IA", value=True)
+    
+    with col3:
+        show_details = st.checkbox("Afficher les détails", value=False)
     
     df = atp_data
     
@@ -1539,7 +1494,9 @@ def show_multimatches(atp_data):
         loser_col = 'loser_name' if 'loser_name' in df.columns else None
         
         if winner_col and loser_col:
-            players = sorted(set(df[winner_col].dropna().unique()) | set(df[loser_col].dropna().unique()))
+            # Nettoyer les noms des joueurs
+            players = sorted(set(str(p).strip() for p in df[winner_col].dropna().unique() if pd.notna(p)) | 
+                           set(str(p).strip() for p in df[loser_col].dropna().unique() if pd.notna(p)))
             
             tournaments = []
             if 'tourney_name' in df.columns:
@@ -1547,8 +1504,9 @@ def show_multimatches(atp_data):
             
             matches = []
             
+            # Interface de saisie avec scroll si beaucoup de matchs
             for i in range(n_matches):
-                with st.expander(f"Match {i+1}", expanded=i==0):
+                with st.expander(f"Match {i+1}", expanded=i==0 and n_matches <= 10):
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
@@ -1575,24 +1533,32 @@ def show_multimatches(atp_data):
                     with col2:
                         odds2 = st.text_input(f"Cote {p2}", key=f"mm_odds2_{i}", placeholder="2.10")
                     
+                    # Afficher la surface
+                    if surface in SURFACE_CONFIG:
+                        st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", surface.lower()), unsafe_allow_html=True)
+                    
                     matches.append({
-                        'player1': p1,
-                        'player2': p2,
+                        'player1': p1.strip() if p1 else None,
+                        'player2': p2.strip() if p2 else None,
                         'tournament': tourn,
                         'surface': surface,
                         'odds1': odds1,
                         'odds2': odds2,
-                        'stats1': get_player_stats(df, p1, surface) if p1 else None,
-                        'stats2': get_player_stats(df, p2, surface) if p2 else None,
-                        'h2h': get_h2h_stats(df, p1, p2) if p1 and p2 else None
+                        'stats1': get_player_stats(df, p1.strip() if p1 else None, surface) if p1 else None,
+                        'stats2': get_player_stats(df, p2.strip() if p2 else None, surface) if p2 else None,
+                        'h2h': get_h2h_stats(df, p1.strip() if p1 else None, p2.strip() if p2 else None) if p1 and p2 else None
                     })
             
-            if st.button("🔍 Analyser tous les matchs", use_container_width=True):
+            if st.button(f"🔍 Analyser {n_matches} matchs", use_container_width=True):
                 st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
                 
                 results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
                 for i, match in enumerate(matches):
+                    status_text.text(f"Analyse du match {i+1}/{n_matches}...")
+                    
                     if match['player1'] and match['player2']:
                         proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
                         confidence = calculate_confidence(proba, match['stats1'], match['stats2'], match['h2h'])
@@ -1608,6 +1574,11 @@ def show_multimatches(atp_data):
                             'odds1': match['odds1'],
                             'odds2': match['odds2']
                         })
+                    
+                    progress_bar.progress((i + 1) / n_matches)
+                
+                status_text.empty()
+                progress_bar.empty()
                 
                 if results:
                     # Tableau des résultats
@@ -1617,6 +1588,7 @@ def show_multimatches(atp_data):
                     if 'confidence' in df_results.columns:
                         df_results['confidence'] = df_results['confidence'].apply(lambda x: f"{x:.0f}/100")
                     
+                    st.markdown(f"**Résultats de l'analyse ({len(results)} matchs)**")
                     st.dataframe(
                         df_results[['match', 'player1', 'player2', 'tournament', 'surface', 'proba', 'confidence']].rename(columns={
                             'match': '#',
@@ -1632,7 +1604,7 @@ def show_multimatches(atp_data):
                     )
                     
                     # Analyses IA si activé
-                    if use_ai and GROQ_AVAILABLE:
+                    if use_ai and GROQ_AVAILABLE and show_details:
                         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
                         st.markdown("<h3>🤖 Analyses IA</h3>", unsafe_allow_html=True)
                         
@@ -1647,10 +1619,10 @@ def show_multimatches(atp_data):
                                     st.markdown(analysis)
 
 # ─────────────────────────────────────────────────────────────
-# COMBINÉS
+# COMBINÉS (MODIFIÉ POUR 30 MATCHS MAX)
 # ─────────────────────────────────────────────────────────────
 def show_combines(atp_data):
-    """Affiche l'interface des combinés"""
+    """Affiche l'interface des combinés avec max 30 sélections"""
     
     st.markdown("<h2>🎰 Générateur de Combinés</h2>", unsafe_allow_html=True)
     
@@ -1658,13 +1630,22 @@ def show_combines(atp_data):
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        n_matches = st.number_input("Matchs", min_value=2, max_value=8, value=3)
+        n_matches = st.number_input(
+            "Matchs à analyser", 
+            min_value=2, 
+            max_value=MAX_MATCHES_COMBINE, 
+            value=min(5, MAX_MATCHES_COMBINE),
+            help=f"Maximum {MAX_MATCHES_COMBINE} matchs"
+        )
     
     with col2:
-        mise = st.number_input("Mise (€)", min_value=1.0, max_value=1000.0, value=10.0, step=5.0)
+        mise = st.number_input("Mise (€)", min_value=1.0, max_value=10000.0, value=10.0, step=5.0)
     
     with col3:
         use_ai = st.checkbox("Analyses IA", value=True)
+    
+    with col4:
+        auto_select = st.checkbox("Auto-sélection", value=True, help="Sélection automatique des meilleurs value bets")
     
     df = atp_data
     
@@ -1673,7 +1654,9 @@ def show_combines(atp_data):
         loser_col = 'loser_name' if 'loser_name' in df.columns else None
         
         if winner_col and loser_col:
-            players = sorted(set(df[winner_col].dropna().unique()) | set(df[loser_col].dropna().unique()))
+            # Nettoyer les noms des joueurs
+            players = sorted(set(str(p).strip() for p in df[winner_col].dropna().unique() if pd.notna(p)) | 
+                           set(str(p).strip() for p in df[loser_col].dropna().unique() if pd.notna(p)))
             
             tournaments = []
             if 'tourney_name' in df.columns:
@@ -1681,9 +1664,12 @@ def show_combines(atp_data):
             
             matches = []
             
+            # Interface de saisie avec scroll si beaucoup de matchs
+            st.markdown(f"### Saisie des {n_matches} matchs")
+            
             for i in range(n_matches):
                 with st.container():
-                    st.markdown(f"<h4>Match {i+1}</h4>", unsafe_allow_html=True)
+                    st.markdown(f"**Match {i+1}**")
                     
                     col1, col2, col3 = st.columns(3)
                     
@@ -1712,18 +1698,19 @@ def show_combines(atp_data):
                     if surface in SURFACE_CONFIG:
                         st.markdown(create_badge(surface, surface.lower()), unsafe_allow_html=True)
                     
-                    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                    if i < n_matches - 1:
+                        st.markdown("---")
                     
                     matches.append({
-                        'player1': p1,
-                        'player2': p2,
+                        'player1': p1.strip() if p1 else None,
+                        'player2': p2.strip() if p2 else None,
                         'tournament': tourn,
                         'surface': surface,
                         'odds1': odds1,
                         'odds2': odds2,
-                        'stats1': get_player_stats(df, p1, surface) if p1 else None,
-                        'stats2': get_player_stats(df, p2, surface) if p2 else None,
-                        'h2h': get_h2h_stats(df, p1, p2) if p1 and p2 else None
+                        'stats1': get_player_stats(df, p1.strip() if p1 else None, surface) if p1 else None,
+                        'stats2': get_player_stats(df, p2.strip() if p2 else None, surface) if p2 else None,
+                        'h2h': get_h2h_stats(df, p1.strip() if p1 else None, p2.strip() if p2 else None) if p1 and p2 else None
                     })
             
             if st.button("🎯 Générer le meilleur combiné", use_container_width=True):
@@ -1731,133 +1718,165 @@ def show_combines(atp_data):
                 
                 # Calculer les probabilités et edges
                 selections = []
+                invalid_matches = 0
                 
-                for match in matches:
-                    if match['player1'] and match['player2'] and match['odds1'] and match['odds2']:
-                        try:
-                            odds1 = float(match['odds1'].replace(',', '.'))
-                            odds2 = float(match['odds2'].replace(',', '.'))
-                            
-                            proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
-                            
-                            # Edge pour chaque joueur
-                            edge1 = proba - 1/odds1
-                            edge2 = (1 - proba) - 1/odds2
-                            
-                            # Sélectionner le meilleur edge positif
-                            if edge1 > 0.02:
-                                selections.append({
-                                    'match': f"{match['player1']} vs {match['player2']}",
-                                    'joueur': match['player1'],
-                                    'proba': proba,
-                                    'cote': odds1,
-                                    'edge': edge1,
-                                    'surface': match['surface']
-                                })
-                            elif edge2 > 0.02:
-                                selections.append({
-                                    'match': f"{match['player1']} vs {match['player2']}",
-                                    'joueur': match['player2'],
-                                    'proba': 1 - proba,
-                                    'cote': odds2,
-                                    'edge': edge2,
-                                    'surface': match['surface']
-                                })
-                        except:
-                            continue
+                with st.spinner("Analyse des matchs en cours..."):
+                    for match in matches:
+                        if match['player1'] and match['player2'] and match['odds1'] and match['odds2']:
+                            try:
+                                odds1 = float(match['odds1'].replace(',', '.'))
+                                odds2 = float(match['odds2'].replace(',', '.'))
+                                
+                                proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
+                                
+                                # Edge pour chaque joueur
+                                edge1 = proba - 1/odds1
+                                edge2 = (1 - proba) - 1/odds2
+                                
+                                if auto_select:
+                                    # Sélection automatique des meilleurs edges positifs
+                                    if edge1 > MIN_EDGE_COMBINE and proba >= MIN_PROBA_COMBINE:
+                                        selections.append({
+                                            'match': f"{match['player1']} vs {match['player2']}",
+                                            'joueur': match['player1'],
+                                            'proba': proba,
+                                            'cote': odds1,
+                                            'edge': edge1,
+                                            'surface': match['surface']
+                                        })
+                                    elif edge2 > MIN_EDGE_COMBINE and (1 - proba) >= MIN_PROBA_COMBINE:
+                                        selections.append({
+                                            'match': f"{match['player1']} vs {match['player2']}",
+                                            'joueur': match['player2'],
+                                            'proba': 1 - proba,
+                                            'cote': odds2,
+                                            'edge': edge2,
+                                            'surface': match['surface']
+                                        })
+                                else:
+                                    # Mode manuel - proposer les deux options
+                                    selections.append({
+                                        'match': f"{match['player1']} vs {match['player2']}",
+                                        'joueur1': match['player1'],
+                                        'joueur2': match['player2'],
+                                        'proba1': proba,
+                                        'proba2': 1 - proba,
+                                        'cote1': odds1,
+                                        'cote2': odds2,
+                                        'edge1': edge1,
+                                        'edge2': edge2,
+                                        'surface': match['surface']
+                                    })
+                            except:
+                                invalid_matches += 1
+                                continue
                 
-                if len(selections) >= 2:
-                    # Trier par edge
-                    selections.sort(key=lambda x: x['edge'], reverse=True)
-                    
-                    # Calculer le combiné
-                    proba_combi = 1.0
-                    cote_combi = 1.0
-                    
-                    for sel in selections[:min(5, len(selections))]:
-                        proba_combi *= sel['proba']
-                        cote_combi *= sel['cote']
-                    
-                    gain = mise * cote_combi
-                    esperance = proba_combi * gain - mise
-                    kelly = (proba_combi * cote_combi - 1) / (cote_combi - 1) if cote_combi > 1 else 0
-                    
-                    # Affichage des résultats
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    proba_color = COLORS['success'] if proba_combi >= 0.3 else COLORS['warning'] if proba_combi >= 0.15 else COLORS['danger']
-                    with col1:
-                        st.markdown(create_metric("Probabilité", f"{proba_combi:.1%}", "", proba_color), unsafe_allow_html=True)
-                    
-                    with col2:
-                        st.markdown(create_metric("Cote combinée", f"{cote_combi:.2f}"), unsafe_allow_html=True)
-                    
-                    esp_color = COLORS['success'] if esperance > 0 else COLORS['danger']
-                    with col3:
-                        st.markdown(create_metric("Espérance", f"{esperance:+.2f}€", "", esp_color), unsafe_allow_html=True)
-                    
-                    with col4:
-                        st.markdown(create_metric("Kelly %", f"{kelly*100:.1f}", "%"), unsafe_allow_html=True)
-                    
-                    # Détail des sélections
-                    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-                    st.markdown("<h3>📋 Sélections retenues</h3>", unsafe_allow_html=True)
-                    
-                    for i, sel in enumerate(selections[:min(5, len(selections))], 1):
-                        edge_color = COLORS['success'] if sel['edge'] > 0.05 else COLORS['warning']
-                        st.markdown(f"""
-                        <div style="background: rgba(255,255,255,0.02); border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem;">
-                            <div style="display: flex; align-items: center; gap: 1rem;">
-                                <div style="width: 30px; height: 30px; background: {COLORS['primary']}20; border-radius: 50%; display: flex; align-items: center; justify-content: center;">{i}</div>
-                                <div style="flex: 2;">
-                                    <div style="font-weight: 600;">{sel['joueur']}</div>
-                                    <div style="font-size: 0.8rem; color: {COLORS['gray']};">{sel['match']}</div>
-                                </div>
-                                <div style="text-align: center; min-width: 80px;">
-                                    <div style="font-size: 0.7rem; color: {COLORS['gray']};">PROBA</div>
-                                    <div style="font-size: 1.2rem; font-weight: 700; color: {COLORS['primary']};">{sel['proba']:.1%}</div>
-                                </div>
-                                <div style="text-align: center; min-width: 60px;">
-                                    <div style="font-size: 0.7rem; color: {COLORS['gray']};">COTE</div>
-                                    <div style="font-size: 1.2rem; font-weight: 700;">{sel['cote']:.2f}</div>
-                                </div>
-                                <div style="text-align: center; min-width: 80px;">
-                                    <div style="font-size: 0.7rem; color: {COLORS['gray']};">EDGE</div>
-                                    <div style="font-size: 1.2rem; font-weight: 700; color: {edge_color};">{sel['edge']*100:+.1f}%</div>
-                                </div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    # Sauvegarde
-                    combine_data = {
-                        'selections': selections[:min(5, len(selections))],
-                        'proba_globale': proba_combi,
-                        'cote_globale': cote_combi,
-                        'mise': mise,
-                        'gain_potentiel': gain,
-                        'esperance': esperance,
-                        'kelly': kelly,
-                        'nb_matches': len(selections[:min(5, len(selections))])
-                    }
-                    
-                    if save_combine(combine_data):
-                        st.success("Combiné sauvegardé dans l'historique !")
-                    
-                    # Analyses IA
-                    if use_ai and GROQ_AVAILABLE:
-                        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-                        st.markdown("<h3>🤖 Analyse du combiné</h3>", unsafe_allow_html=True)
+                if invalid_matches > 0:
+                    st.warning(f"{invalid_matches} matchs ignorés (cotes invalides ou manquantes)")
+                
+                if auto_select:
+                    # Mode automatique
+                    if len(selections) >= 2:
+                        # Trier par edge
+                        selections.sort(key=lambda x: x['edge'], reverse=True)
                         
-                        prompt = f"Analyse ce combiné de {len(selections[:min(5, len(selections))])} matchs avec une probabilité globale de {proba_combi:.1%} et une cote de {cote_combi:.2f}. Donne un avis sur sa pertinence et les risques."
+                        # Limiter au nombre maximum de sélections
+                        max_select = min(MAX_SELECTIONS_COMBINE, len(selections))
+                        selected = selections[:max_select]
                         
-                        with st.spinner("Analyse en cours..."):
-                            analysis = call_groq_api(prompt)
+                        # Calculer le combiné
+                        proba_combi = 1.0
+                        cote_combi = 1.0
                         
-                        if analysis:
-                            st.markdown(f"<div class='card'>{analysis}</div>", unsafe_allow_html=True)
+                        for sel in selected:
+                            proba_combi *= sel['proba']
+                            cote_combi *= sel['cote']
+                        
+                        gain = mise * cote_combi
+                        esperance = proba_combi * gain - mise
+                        kelly = (proba_combi * cote_combi - 1) / (cote_combi - 1) if cote_combi > 1 else 0
+                        
+                        # Affichage compact des métriques
+                        st.markdown("### 📊 Résultats du combiné")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        proba_color = COLORS['success'] if proba_combi >= 0.3 else COLORS['warning'] if proba_combi >= 0.15 else COLORS['danger']
+                        with col1:
+                            st.markdown(create_metric("Probabilité", f"{proba_combi:.1%}", "", proba_color), unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.markdown(create_metric("Cote combinée", f"{cote_combi:.2f}"), unsafe_allow_html=True)
+                        
+                        esp_color = COLORS['success'] if esperance > 0 else COLORS['danger']
+                        with col3:
+                            st.markdown(create_metric("Espérance", f"{esperance:+.2f}€", "", esp_color), unsafe_allow_html=True)
+                        
+                        with col4:
+                            st.markdown(create_metric("Kelly %", f"{kelly*100:.1f}", "%"), unsafe_allow_html=True)
+                        
+                        # Détail des sélections
+                        st.markdown(f"### 📋 Sélections retenues ({len(selected)}/{len(selections)})")
+                        
+                        # Tableau compact des sélections
+                        df_selections = pd.DataFrame([{
+                            '#': i+1,
+                            'Joueur': sel['joueur'],
+                            'Match': sel['match'],
+                            'Proba': f"{sel['proba']:.1%}",
+                            'Cote': f"{sel['cote']:.2f}",
+                            'Edge': f"{sel['edge']*100:+.1f}%"
+                        } for i, sel in enumerate(selected)])
+                        
+                        st.dataframe(df_selections, use_container_width=True, hide_index=True)
+                        
+                        # Sauvegarde
+                        combine_data = {
+                            'selections': selected,
+                            'proba_globale': proba_combi,
+                            'cote_globale': cote_combi,
+                            'mise': mise,
+                            'gain_potentiel': gain,
+                            'esperance': esperance,
+                            'kelly': kelly,
+                            'nb_matches': len(selected)
+                        }
+                        
+                        if save_combine(combine_data):
+                            st.success("✅ Combiné sauvegardé dans l'historique !")
+                        
+                        # Analyses IA
+                        if use_ai and GROQ_AVAILABLE:
+                            st.markdown("### 🤖 Analyse du combiné")
+                            
+                            prompt = f"Analyse ce combiné de {len(selected)} matchs avec une probabilité globale de {proba_combi:.1%} et une cote de {cote_combi:.2f}. Donne un avis sur sa pertinence et les risques."
+                            
+                            with st.spinner("Analyse en cours..."):
+                                analysis = call_groq_api(prompt)
+                            
+                            if analysis:
+                                st.markdown(f"<div class='card'>{analysis}</div>", unsafe_allow_html=True)
+                    else:
+                        st.warning(f"⚠️ Pas assez de sélections valides ({len(selections)} trouvées, minimum 2 required). Ajuste les seuils ou vérifie les cotes.")
+                
                 else:
-                    st.warning("Pas assez de sélections valides avec edge positif. Vérifie tes cotes.")
+                    # Mode manuel - afficher toutes les options
+                    st.markdown("### 📋 Sélections disponibles")
+                    st.markdown("Choisis manuellement tes sélections dans la liste ci-dessous")
+                    
+                    # Créer un dataframe des options
+                    df_options = pd.DataFrame([{
+                        'Match': s['match'],
+                        'Surface': s['surface'],
+                        'Option 1': f"{s['joueur1']} @ {s['cote1']:.2f} (edge: {s['edge1']*100:+.1f}%)",
+                        'Proba 1': f"{s['proba1']:.1%}",
+                        'Option 2': f"{s['joueur2']} @ {s['cote2']:.2f} (edge: {s['edge2']*100:+.1f}%)",
+                        'Proba 2': f"{s['proba2']:.1%}"
+                    } for s in selections])
+                    
+                    st.dataframe(df_options, use_container_width=True, hide_index=True)
+                    
+                    st.info("Mode manuel en développement - utilise le mode auto-sélection pour l'instant")
 
 # ─────────────────────────────────────────────────────────────
 # HISTORIQUE
@@ -1922,12 +1941,24 @@ def show_history():
         combines = load_combines()
         
         if combines:
-            for i, comb in enumerate(combines):
+            # Pagination
+            items_per_page = 10
+            total_pages = (len(combines) + items_per_page - 1) // items_per_page
+            
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                page = st.number_input("Page", min_value=1, max_value=total_pages, value=1)
+            
+            start_idx = (page - 1) * items_per_page
+            end_idx = min(start_idx + items_per_page, len(combines))
+            
+            for i in range(start_idx, end_idx):
+                comb = combines[-(i+1)]  # Inverser pour avoir le plus récent en premier
                 date_str = comb.get('date', 'Date inconnue')[:16]
                 nb_matches = comb.get('nb_matches', 0)
                 proba = comb.get('proba_globale', 0)
                 
-                with st.expander(f"{date_str} - {nb_matches} matchs - Proba {proba:.1%}", expanded=i==0):
+                with st.expander(f"🎯 {date_str} - {nb_matches} matchs - Proba {proba:.1%}", expanded=i==start_idx):
                     cote = comb.get('cote_globale', 0)
                     esperance = comb.get('esperance', 0)
                     kelly = comb.get('kelly', 0)
@@ -1951,11 +1982,17 @@ def show_history():
                     # Détail des sélections
                     if 'selections' in comb and comb['selections']:
                         st.markdown("**Sélections:**")
-                        for sel in comb['selections']:
-                            joueur = sel.get('joueur', 'Inconnu')
-                            proba_sel = sel.get('proba', 0)
-                            cote_sel = sel.get('cote', 0)
-                            st.markdown(f"- {joueur} ({proba_sel:.1%}) @ {cote_sel:.2f}")
+                        
+                        # Créer un tableau pour les sélections
+                        df_sel = pd.DataFrame([{
+                            'Joueur': sel.get('joueur', 'Inconnu'),
+                            'Match': sel.get('match', ''),
+                            'Proba': f"{sel.get('proba', 0):.1%}",
+                            'Cote': f"{sel.get('cote', 0):.2f}",
+                            'Edge': f"{sel.get('edge', 0)*100:+.1f}%"
+                        } for sel in comb['selections']])
+                        
+                        st.dataframe(df_sel, use_container_width=True, hide_index=True)
         else:
             st.info("Aucun combiné dans l'historique")
 
