@@ -7,3 +7,5 @@ h5py
 scikit-learn
 joblib
 groq
+plotly
+Pillow
