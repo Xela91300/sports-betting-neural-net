@@ -1328,8 +1328,9 @@ def show_predictions(atp_data):
             loser_col = 'loser_name' if 'loser_name' in df.columns else None
             
             if winner_col and loser_col:
-                # Liste des joueurs
-                players = sorted(set(df[winner_col].dropna().unique()) | set(df[loser_col].dropna().unique()))
+                # Liste des joueurs (avec strip pour nettoyer les noms)
+                players = sorted(set(str(p).strip() for p in df[winner_col].dropna().unique() if pd.notna(p)) | 
+                               set(str(p).strip() for p in df[loser_col].dropna().unique() if pd.notna(p)))
                 
                 if players:
                     # Sélection des joueurs
@@ -1356,10 +1357,14 @@ def show_predictions(atp_data):
     
     with col2:
         if player1 and player2:
+            # Nettoyer les noms des joueurs pour l'affichage
+            player1_clean = player1.strip()
+            player2_clean = player2.strip()
+            
             # Calcul des statistiques
-            stats1 = get_player_stats(df, player1, surface)
-            stats2 = get_player_stats(df, player2, surface)
-            h2h = get_h2h_stats(df, player1, player2)
+            stats1 = get_player_stats(df, player1_clean, surface)
+            stats2 = get_player_stats(df, player2_clean, surface)
+            h2h = get_h2h_stats(df, player1_clean, player2_clean)
             
             # Probabilité
             proba = calculate_probability(stats1, stats2, h2h, surface)
@@ -1368,13 +1373,13 @@ def show_predictions(atp_data):
             # Affichage des résultats
             st.markdown("<h3 style='text-align: center;'>Résultat</h3>", unsafe_allow_html=True)
             
-            # Barre de progression avec formatage corrigé
+            # Barre de progression avec noms nettoyés
             st.markdown(f"""
             <div style="text-align: center; margin: 2rem 0;">
-                <div style="font-size: 1.2rem; color: #6C7A89; margin-bottom: 1rem;">{player1}</div>
+                <div style="font-size: 1.2rem; color: #6C7A89; margin-bottom: 1rem;">{player1_clean}</div>
                 <div style="font-size: 3rem; font-weight: 800; color: {COLORS['primary']};">{proba:.1%}</div>
                 {create_progress_bar(proba)}
-                <div style="font-size: 1.2rem; color: #6C7A89; margin-top: 1rem;">{player2}</div>
+                <div style="font-size: 1.2rem; color: #6C7A89; margin-top: 1rem;">{player2_clean}</div>
                 <div style="font-size: 1rem; color: {COLORS['gray']};">{(1-proba):.1%}</div>
             </div>
             """, unsafe_allow_html=True)
@@ -1386,8 +1391,8 @@ def show_predictions(atp_data):
             # Bouton de sauvegarde
             if st.button("💾 Sauvegarder la prédiction", use_container_width=True):
                 pred_data = {
-                    'player1': player1,
-                    'player2': player2,
+                    'player1': player1_clean,
+                    'player2': player2_clean,
                     'tournament': tournament if tournament else "Inconnu",
                     'surface': surface,
                     'proba': proba,
@@ -1402,11 +1407,15 @@ def show_predictions(atp_data):
     if player1 and player2 and 'df' in locals():
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         
+        # Nettoyer les noms pour l'affichage des stats
+        player1_clean = player1.strip()
+        player2_clean = player2.strip()
+        
         # Détails des statistiques
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown(f"<h4>{player1}</h4>", unsafe_allow_html=True)
+            st.markdown(f"<h4>{player1_clean}</h4>", unsafe_allow_html=True)
             if stats1:
                 st.markdown(create_stat_row("Matchs joués", stats1['matches_played']), unsafe_allow_html=True)
                 st.markdown(create_stat_row("Victoires", stats1['wins']), unsafe_allow_html=True)
@@ -1414,7 +1423,7 @@ def show_predictions(atp_data):
                 st.markdown(create_stat_row("Win rate", f"{stats1['win_rate']:.1%}"), unsafe_allow_html=True)
         
         with col2:
-            st.markdown(f"<h4>{player2}</h4>", unsafe_allow_html=True)
+            st.markdown(f"<h4>{player2_clean}</h4>", unsafe_allow_html=True)
             if stats2:
                 st.markdown(create_stat_row("Matchs joués", stats2['matches_played']), unsafe_allow_html=True)
                 st.markdown(create_stat_row("Victoires", stats2['wins']), unsafe_allow_html=True)
@@ -1425,10 +1434,86 @@ def show_predictions(atp_data):
             st.markdown("<h4>Face à Face</h4>", unsafe_allow_html=True)
             if h2h:
                 st.markdown(create_stat_row("Matchs", h2h['total_matches']), unsafe_allow_html=True)
-                st.markdown(create_stat_row(f"{player1}", h2h.get(f'{player1}_wins', 0)), unsafe_allow_html=True)
-                st.markdown(create_stat_row(f"{player2}", h2h.get(f'{player2}_wins', 0)), unsafe_allow_html=True)
+                st.markdown(create_stat_row(f"{player1_clean}", h2h.get(f'{player1_clean}_wins', 0)), unsafe_allow_html=True)
+                st.markdown(create_stat_row(f"{player2_clean}", h2h.get(f'{player2_clean}_wins', 0)), unsafe_allow_html=True)
             else:
                 st.info("Aucun face-à-face")
+
+# ─────────────────────────────────────────────────────────────
+# FONCTION get_player_stats (à mettre à jour aussi)
+# ─────────────────────────────────────────────────────────────
+def get_player_stats(df, player, surface=None, n_matches=20):
+    """Calcule les statistiques d'un joueur"""
+    if df is None or player is None:
+        return None
+    
+    # Nettoyer le nom du joueur
+    player_clean = player.strip() if isinstance(player, str) else player
+    
+    # Vérifier les colonnes disponibles
+    winner_col = 'winner_name' if 'winner_name' in df.columns else None
+    loser_col = 'loser_name' if 'loser_name' in df.columns else None
+    
+    if not winner_col or not loser_col:
+        return None
+    
+    # Nettoyer les noms dans le dataframe pour la comparaison
+    df_winner_clean = df[winner_col].astype(str).str.strip()
+    df_loser_clean = df[loser_col].astype(str).str.strip()
+    
+    # Filtrer les matchs du joueur
+    matches = df[(df_winner_clean == player_clean) | (df_loser_clean == player_clean)].copy()
+    if len(matches) == 0:
+        return None
+    
+    # Statistiques de base
+    stats = {
+        'name': player_clean,
+        'matches_played': len(matches),
+        'wins': len(matches[df_winner_clean == player_clean]),
+        'losses': len(matches[df_loser_clean == player_clean]),
+    }
+    
+    # Win rate
+    stats['win_rate'] = stats['wins'] / stats['matches_played'] if stats['matches_played'] > 0 else 0
+    
+    return stats
+
+# ─────────────────────────────────────────────────────────────
+# FONCTION get_h2h_stats (à mettre à jour aussi)
+# ─────────────────────────────────────────────────────────────
+def get_h2h_stats(df, player1, player2):
+    """Calcule les statistiques H2H"""
+    if df is None or player1 is None or player2 is None:
+        return None
+    
+    # Nettoyer les noms
+    player1_clean = player1.strip() if isinstance(player1, str) else player1
+    player2_clean = player2.strip() if isinstance(player2, str) else player2
+    
+    winner_col = 'winner_name' if 'winner_name' in df.columns else None
+    loser_col = 'loser_name' if 'loser_name' in df.columns else None
+    
+    if not winner_col or not loser_col:
+        return None
+    
+    # Nettoyer les noms dans le dataframe
+    df_winner_clean = df[winner_col].astype(str).str.strip()
+    df_loser_clean = df[loser_col].astype(str).str.strip()
+    
+    h2h = df[((df_winner_clean == player1_clean) & (df_loser_clean == player2_clean)) |
+             ((df_winner_clean == player2_clean) & (df_loser_clean == player1_clean))].copy()
+    
+    if len(h2h) == 0:
+        return None
+    
+    stats = {
+        'total_matches': len(h2h),
+        f'{player1_clean}_wins': len(h2h[df_winner_clean == player1_clean]),
+        f'{player2_clean}_wins': len(h2h[df_winner_clean == player2_clean]),
+    }
+    
+    return stats
 
 # ─────────────────────────────────────────────────────────────
 # MULTI-MATCHS
