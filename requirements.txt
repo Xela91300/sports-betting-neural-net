@@ -13,3 +13,5 @@ requests
 tqdm>
 python-dateutil
 openpyxl
+python-telegram-bot
+nest_asyncio
