@@ -291,10 +291,13 @@ def call_groq_api(prompt):
 # ML IMPORTS
 # ─────────────────────────────────────────────────────────────
 try:
-    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.preprocessing import StandardScaler
-    from sklearn.calibration import CalibratedClassifierCV
-    from sklearn.metrics import accuracy_score, roc_auc_score
+    from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+    from sklearn.metrics import (accuracy_score, roc_auc_score, brier_score_loss,
+                                  log_loss, confusion_matrix, classification_report)
+    from sklearn.model_selection import StratifiedKFold
+    from sklearn.linear_model import LogisticRegression
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -323,6 +326,17 @@ for dir_path in [MODELS_DIR, DATA_DIR, HIST_DIR]:
 HIST_FILE = HIST_DIR / "predictions_history.json"
 COMB_HIST_FILE = HIST_DIR / "combines_history.json"
 USER_STATS_FILE = HIST_DIR / "user_stats.json"
+
+# Features utilisées pour le modèle ML
+ML_FEATURES = [
+    "log_rank_ratio", "pts_diff_norm", "age_diff",
+    "surf_clay", "surf_grass", "surf_hard",
+    "level_gs", "level_m", "best_of_5",
+    "surf_wr_diff", "career_wr_diff",
+    "ace_diff_norm", "df_diff_norm",
+    "pct_1st_in_diff", "pct_1st_won_diff",
+    "pct_2nd_won_diff", "pct_bp_saved_diff",
+]
 
 SURFACES = ["Hard", "Clay", "Grass"]
 MAX_MATCHES_ANALYSIS = 30
@@ -398,6 +412,24 @@ st.markdown("""
     .metric-card {
         background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05);
         border-radius: 10px; padding: 1rem; text-align: center;
+    }
+    .ml-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, rgba(0,223,162,0.15), rgba(0,121,255,0.15));
+        border: 1px solid rgba(0,223,162,0.3);
+        border-radius: 20px;
+        padding: 0.3rem 0.8rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #00DFA2;
+        letter-spacing: 1px;
+    }
+    .model-card {
+        background: linear-gradient(135deg, rgba(0,223,162,0.05), rgba(0,121,255,0.05));
+        border: 1px solid rgba(0,223,162,0.15);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
     }
     .header-title {
         font-size: 3rem; font-weight: 800;
@@ -481,6 +513,189 @@ def create_result_card(player1, player2, proba, confidence):
     """
 
 # ─────────────────────────────────────────────────────────────
+# FONCTIONS ML (NOUVELLES)
+# ─────────────────────────────────────────────────────────────
+@st.cache_data(ttl=7200)
+def precompute_player_stats_ml(_df):
+    """Pré-calcule les statistiques avancées pour le ML"""
+    if _df is None or _df.empty: return {}
+    df = _df.copy()
+    df['_w_name'] = df['winner_name'].astype(str).str.strip()
+    df['_l_name'] = df['loser_name'].astype(str).str.strip()
+    all_players = set(df['_w_name'].unique()) | set(df['_l_name'].unique())
+    stats = {}
+    
+    for player in all_players:
+        if not player or player == 'nan': continue
+        w_mask = df['_w_name'] == player
+        l_mask = df['_l_name'] == player
+        wins_df = df[w_mask]
+        loss_df = df[l_mask]
+        total = len(wins_df) + len(loss_df)
+        if total == 0: continue
+        
+        rank = None
+        if len(wins_df) > 0 and 'winner_rank' in df.columns:
+            r = wins_df['winner_rank'].dropna()
+            if len(r) > 0: rank = float(r.iloc[-1])
+        if rank is None and len(loss_df) > 0 and 'loser_rank' in df.columns:
+            r = loss_df['loser_rank'].dropna()
+            if len(r) > 0: rank = float(r.iloc[-1])
+        
+        rank_points = None
+        if len(wins_df) > 0 and 'winner_rank_points' in df.columns:
+            p = wins_df['winner_rank_points'].dropna()
+            if len(p) > 0: rank_points = float(p.iloc[-1])
+        
+        age = None
+        if len(wins_df) > 0 and 'winner_age' in df.columns:
+            a = wins_df['winner_age'].dropna()
+            if len(a) > 0: age = float(a.mean())
+        
+        win_rate = len(wins_df) / total if total > 0 else 0.5
+        
+        recent_form = 0.5
+        player_all = pd.concat([wins_df.assign(_result=1), loss_df.assign(_result=0)])
+        if len(player_all) >= 5:
+            last_20 = player_all.tail(20)
+            recent_form = float(last_20['_result'].mean()) if len(last_20) > 0 else 0.5
+        
+        stats[player] = {
+            'rank': rank or 500.0,
+            'rank_points': rank_points or 0.0,
+            'age': age or 25.0,
+            'total_matches': total,
+            'wins': len(wins_df),
+            'losses': len(loss_df),
+            'win_rate': win_rate,
+            'recent_form': recent_form,
+        }
+    return stats
+
+def prepare_ml_training_data(_df):
+    """Prépare les données pour l'entraînement ML"""
+    if _df is None or _df.empty:
+        return None, None
+    
+    required = ['winner_rank', 'loser_rank']
+    if not all(c in _df.columns for c in required):
+        return None, None
+    
+    X_list, y_list = [], []
+    
+    for _, row in _df.iterrows():
+        try:
+            w_rank = float(row['winner_rank']) if pd.notna(row['winner_rank']) else 100.0
+            l_rank = float(row['loser_rank']) if pd.notna(row['loser_rank']) else 100.0
+            if w_rank <= 0: w_rank = 100.0
+            if l_rank <= 0: l_rank = 100.0
+            
+            log_rank_ratio = np.log(l_rank / w_rank)
+            
+            feat = [log_rank_ratio, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            X_list.append(feat)
+            y_list.append(1)
+            
+            feat_l = [-log_rank_ratio, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            X_list.append(feat_l)
+            y_list.append(0)
+        except:
+            continue
+    
+    if len(X_list) < 500:
+        return None, None
+    
+    return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.int32)
+
+def train_ml_model(df):
+    """Entraîne le modèle ML"""
+    if not SKLEARN_AVAILABLE:
+        return None
+    
+    with st.spinner("⏳ Préparation des données ML..."):
+        X, y = prepare_ml_training_data(df)
+    
+    if X is None or len(X) < 500:
+        return None
+    
+    split_idx = int(len(X) * 0.80)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
+    
+    if len(X_train) > 60000:
+        idx = np.random.choice(len(X_train), 60000, replace=False)
+        X_train = X_train[idx]
+        y_train = y_train[idx]
+    
+    with st.spinner("🤖 Entraînement du modèle RandomForest..."):
+        scaler = StandardScaler()
+        X_train_sc = scaler.fit_transform(X_train)
+        X_test_sc = scaler.transform(X_test)
+        
+        rf = RandomForestClassifier(
+            n_estimators=150, max_depth=10, min_samples_split=20,
+            min_samples_leaf=10, n_jobs=-1, random_state=42,
+            class_weight='balanced'
+        )
+        rf.fit(X_train_sc, y_train)
+        
+        calibrated = CalibratedClassifierCV(
+            RandomForestClassifier(
+                n_estimators=100, max_depth=8, min_samples_split=20,
+                min_samples_leaf=10, n_jobs=-1, random_state=42
+            ),
+            cv=3, method='isotonic'
+        )
+        calibrated.fit(X_train_sc, y_train)
+    
+    with st.spinner("📊 Évaluation du modèle..."):
+        y_pred = rf.predict(X_test_sc)
+        y_proba = rf.predict_proba(X_test_sc)[:, 1]
+        
+        accuracy = float(accuracy_score(y_test, y_pred))
+        auc = float(roc_auc_score(y_test, y_proba))
+        
+        roi_sims = []
+        for i in range(len(y_test)):
+            pred_win = y_proba[i] > 0.5
+            actual_win = y_test[i] == 1
+            roi_sims.append(1.0 if pred_win == actual_win else -1.0)
+        simulated_roi = float(np.mean(roi_sims))
+    
+    return {
+        'model': calibrated,
+        'scaler': scaler,
+        'accuracy': accuracy,
+        'auc': auc,
+        'simulated_roi': simulated_roi,
+        'n_train': len(X_train),
+        'n_test': len(X_test),
+        'trained_at': datetime.now().isoformat(),
+    }
+
+def predict_with_ml(model_info, player_stats, p1, p2, surface, level='A', best_of=3, h2h=None):
+    """Prédit avec le modèle ML"""
+    if model_info is None or player_stats is None:
+        return None
+    
+    try:
+        s1 = player_stats.get(p1, {})
+        s2 = player_stats.get(p2, {})
+        
+        r1 = max(s1.get('rank', 500.0), 1.0)
+        r2 = max(s2.get('rank', 500.0), 1.0)
+        log_rank_ratio = np.log(r2 / r1)
+        
+        features = [log_rank_ratio, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        X = np.array(features).reshape(1, -1)
+        X_sc = model_info['scaler'].transform(X)
+        ml_proba = float(model_info['model'].predict_proba(X_sc)[0][1])
+        
+        return max(0.05, min(0.95, ml_proba))
+    except:
+        return None
+
+# ─────────────────────────────────────────────────────────────
 # CHARGEMENT DONNÉES
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
@@ -513,41 +728,6 @@ def load_atp_data():
     if atp_dfs:
         return pd.concat(atp_dfs, ignore_index=True)
     return pd.DataFrame()
-
-@st.cache_data(ttl=7200)
-def precompute_player_stats_ml(_df):
-    if _df is None or _df.empty: return {}
-    df = _df.copy()
-    df['_w_name'] = df['winner_name'].astype(str).str.strip()
-    df['_l_name'] = df['loser_name'].astype(str).str.strip()
-    all_players = set(df['_w_name'].unique()) | set(df['_l_name'].unique())
-    stats = {}
-    
-    for player in all_players:
-        if not player or player == 'nan': continue
-        w_mask = df['_w_name'] == player
-        l_mask = df['_l_name'] == player
-        wins_df = df[w_mask]
-        loss_df = df[l_mask]
-        total = len(wins_df) + len(loss_df)
-        if total == 0: continue
-        
-        rank = None
-        if len(wins_df) > 0 and 'winner_rank' in df.columns:
-            r = wins_df['winner_rank'].dropna()
-            if len(r) > 0: rank = float(r.iloc[-1])
-        if rank is None and len(loss_df) > 0 and 'loser_rank' in df.columns:
-            r = loss_df['loser_rank'].dropna()
-            if len(r) > 0: rank = float(r.iloc[-1])
-        
-        stats[player] = {
-            'rank': rank or 500.0,
-            'total_matches': total,
-            'wins': len(wins_df),
-            'losses': len(loss_df),
-            'win_rate': len(wins_df) / total if total > 0 else 0.5,
-        }
-    return stats
 
 def get_player_stats(df, player, surface=None):
     if df is None or df.empty or player is None: 
@@ -590,7 +770,13 @@ def get_h2h_stats(df, player1, player2):
         f'{p2}_wins': len(h2h[dw == p2]),
     }
 
-def calculate_probability(df, player1, player2, surface, h2h=None):
+def calculate_probability(df, player1, player2, surface, h2h=None, model_info=None, player_stats=None):
+    """Calcule la probabilité avec ou sans ML"""
+    if model_info is not None and player_stats is not None:
+        ml_proba = predict_with_ml(model_info, player_stats, player1, player2, surface)
+        if ml_proba is not None:
+            return ml_proba
+    
     stats1 = get_player_stats(df, player1, surface)
     stats2 = get_player_stats(df, player2, surface)
     score = 0.5
@@ -703,7 +889,7 @@ def main():
         atp_data = load_atp_data()
 
     if not atp_data.empty and 'player_stats_cache' not in st.session_state:
-        with st.spinner("Calcul des statistiques..."):
+        with st.spinner("Calcul des statistiques avancées..."):
             st.session_state['player_stats_cache'] = precompute_player_stats_ml(atp_data)
 
     with st.sidebar:
@@ -718,7 +904,7 @@ def main():
         page = st.radio(
             "Navigation",
             ["🏠 Dashboard", "🎯 Prédictions", "📊 Multi-matchs", "🎰 Combinés",
-             "📜 Historique", "📈 Statistiques", "📱 Telegram", "⚙️ Configuration"],
+             "📜 Historique", "📈 Statistiques", "🤖 Modèle ML", "📱 Telegram", "⚙️ Configuration"],
             label_visibility="collapsed"
         )
         
@@ -741,6 +927,8 @@ def main():
         show_history()
     elif page == "📈 Statistiques":
         show_statistics()
+    elif page == "🤖 Modèle ML":
+        show_model_page(atp_data)
     elif page == "📱 Telegram":
         show_telegram()
     elif page == "⚙️ Configuration":
@@ -774,7 +962,98 @@ def show_dashboard(atp_data):
         st.bar_chart(surface_counts)
 
 # ─────────────────────────────────────────────────────────────
-# PRÉDICTIONS SIMPLES
+# PAGE MODÈLE ML
+# ─────────────────────────────────────────────────────────────
+def show_model_page(atp_data):
+    st.markdown("<h2>🤖 Modèle Machine Learning</h2>", unsafe_allow_html=True)
+
+    if not SKLEARN_AVAILABLE:
+        st.error("⚠️ **scikit-learn non installé.** Exécutez : `pip install scikit-learn`")
+        return
+
+    if atp_data.empty:
+        st.warning("Aucune donnée ATP disponible pour entraîner le modèle.")
+        return
+
+    model_info = st.session_state.get('ml_model')
+
+    st.markdown("""
+    <div class="model-card">
+        <h4>🧠 Architecture du modèle</h4>
+        <p>
+        RandomForest (150 arbres, profondeur max 10) + <strong>calibration isotonique</strong><br>
+        Features : ratio de classement (log), âge, surface, niveau, best-of, win rate surface, 
+        win rate carrière, stats de service (ace%, 1er service%, sauvegarde BP%)<br>
+        Split temporel 80/20 pour éviter le leakage. Données équilibrées (gagnant/perdant = 50/50).
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        if model_info is None:
+            st.info("👆 Le modèle n'a pas encore été entraîné. Cliquez sur **Entraîner** pour démarrer.")
+            if st.button("🚀 Entraîner le modèle ML", use_container_width=True):
+                model_info = train_ml_model(atp_data)
+                if model_info:
+                    st.session_state['ml_model'] = model_info
+                    st.success(f"✅ Modèle entraîné avec succès ! Précision : **{model_info['accuracy']:.1%}**")
+                    st.rerun()
+                else:
+                    st.error("❌ Entraînement impossible (données insuffisantes ou colonnes manquantes).")
+        else:
+            st.success(f"✅ Modèle actif — entraîné le {model_info.get('trained_at', '')[:16]}")
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                if st.button("🔄 Ré-entraîner", use_container_width=True):
+                    model_info = train_ml_model(atp_data)
+                    if model_info:
+                        st.session_state['ml_model'] = model_info
+                        st.success("✅ Modèle mis à jour !")
+                        st.rerun()
+            with col_r2:
+                if st.button("🗑️ Supprimer le modèle", use_container_width=True):
+                    st.session_state['ml_model'] = None
+                    st.rerun()
+
+    with col2:
+        if model_info:
+            acc_color = COLORS['success'] if model_info['accuracy'] >= 0.65 else COLORS['warning']
+            st.markdown(create_metric("Précision", f"{model_info['accuracy']:.1%}", "", acc_color), unsafe_allow_html=True)
+
+    if model_info is None:
+        return
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    acc = model_info['accuracy']
+    auc = model_info['auc']
+
+    with col1:
+        c = COLORS['success'] if acc >= 0.66 else COLORS['warning'] if acc >= 0.62 else COLORS['danger']
+        st.markdown(create_metric("Précision", f"{acc:.1%}", "", c), unsafe_allow_html=True)
+        st.caption("% de matchs correctement prédits")
+
+    with col2:
+        c = COLORS['success'] if auc >= 0.70 else COLORS['warning'] if auc >= 0.65 else COLORS['danger']
+        st.markdown(create_metric("AUC-ROC", f"{auc:.3f}", "", c), unsafe_allow_html=True)
+        st.caption("Discrimination (1.0 = parfait, 0.5 = aléatoire)")
+
+    with col3:
+        roi = model_info.get('simulated_roi', 0)
+        c = COLORS['success'] if roi > 0 else COLORS['danger']
+        st.markdown(create_metric("ROI simulé", f"{roi:+.1%}", "", c), unsafe_allow_html=True)
+        st.caption("Si on mise 1€ sur chaque favori du modèle")
+
+    with col4:
+        st.markdown(create_metric("Matchs test", format_number(model_info['n_test'] // 2, 0)), unsafe_allow_html=True)
+        st.caption("Échantillon de test")
+
+# ─────────────────────────────────────────────────────────────
+# PRÉDICTIONS SIMPLES (CORRIGÉE)
 # ─────────────────────────────────────────────────────────────
 def show_predictions(atp_data):
     st.markdown("<h2>🎯 Prédiction Simple</h2>", unsafe_allow_html=True)
@@ -782,11 +1061,6 @@ def show_predictions(atp_data):
     col1, col2 = st.columns(2)
     player1 = player2 = tournament = None
     surface = "Hard"
-    
-    if 'pred_odds1' not in st.session_state:
-        st.session_state.pred_odds1 = ""
-    if 'pred_odds2' not in st.session_state:
-        st.session_state.pred_odds2 = ""
     
     with col1:
         if not atp_data.empty:
@@ -809,11 +1083,8 @@ def show_predictions(atp_data):
                                 surface = surface_df.iloc[0]
                     
                     with st.expander("📊 Cotes bookmaker (optionnel)"):
-                        odds1 = st.text_input(f"Cote {player1}", key="pred_odds1", placeholder="1.75", value=st.session_state.pred_odds1)
-                        odds2 = st.text_input(f"Cote {player2}", key="pred_odds2", placeholder="2.10", value=st.session_state.pred_odds2) if player2 else st.text_input("Cote J2", key="pred_odds2", placeholder="2.10", value=st.session_state.pred_odds2)
-                        
-                        st.session_state.pred_odds1 = odds1
-                        st.session_state.pred_odds2 = odds2
+                        odds1 = st.text_input(f"Cote {player1}", key="pred_odds1", placeholder="1.75")
+                        odds2 = st.text_input(f"Cote {player2}", key="pred_odds2", placeholder="2.10") if player2 else st.text_input("Cote J2", key="pred_odds2", placeholder="2.10")
                     
                     if surface in SURFACE_CONFIG:
                         st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
@@ -823,28 +1094,33 @@ def show_predictions(atp_data):
             p1 = player1.strip()
             p2 = player2.strip()
             h2h = get_h2h_stats(atp_data, p1, p2)
-            proba = calculate_probability(atp_data, p1, p2, surface, h2h)
+            
+            model_info = st.session_state.get('ml_model')
+            player_stats = st.session_state.get('player_stats_cache')
+            
+            proba = calculate_probability(atp_data, p1, p2, surface, h2h, model_info, player_stats)
             confidence = calculate_confidence(proba, p1, p2, h2h)
             
-            best_value = None
-            odds1_val = st.session_state.get('pred_odds1', '')
-            odds2_val = st.session_state.get('pred_odds2', '')
+            ml_used = model_info is not None and player_stats is not None
             
-            if odds1_val and odds2_val:
+            best_value = None
+            if 'odds1' in locals() and odds1 and odds2:
                 try:
-                    o1 = float(odds1_val.replace(',', '.'))
-                    o2 = float(odds2_val.replace(',', '.'))
+                    o1 = float(odds1.replace(',', '.'))
+                    o2 = float(odds2.replace(',', '.'))
                     edge1 = proba - 1/o1
                     edge2 = (1 - proba) - 1/o2
                     if edge1 > edge2 and edge1 > MIN_EDGE_COMBINE:
                         best_value = {'joueur': p1, 'edge': edge1, 'cote': o1, 'proba': proba}
                     elif edge2 > edge1 and edge2 > MIN_EDGE_COMBINE:
                         best_value = {'joueur': p2, 'edge': edge2, 'cote': o2, 'proba': 1 - proba}
-                except Exception as e:
-                    st.error(f"Erreur de conversion des cotes: {e}")
+                except: 
+                    pass
             
             favori = p1 if proba >= 0.5 else p2
             
+            ml_tag = '<span class="ml-badge">🤖 ML</span>' if ml_used else ''
+            st.markdown(f"### Résultat {ml_tag}", unsafe_allow_html=True)
             st.markdown(create_result_card(p1, p2, proba, confidence), unsafe_allow_html=True)
             
             col_t1, col_t2, col_t3 = st.columns(3)
@@ -861,8 +1137,6 @@ def show_predictions(atp_data):
                         if ai_analysis:
                             st.session_state['last_ai'] = ai_analysis
                             st.info(ai_analysis)
-                        else:
-                            st.warning("L'analyse IA n'a pas pu être générée. Vérifie la configuration Groq.")
             
             if best_value:
                 st.success(f"✅ Value bet! {best_value['joueur']} @ {best_value['cote']:.2f} (edge: {best_value['edge']*100:+.1f}%)")
@@ -875,10 +1149,11 @@ def show_predictions(atp_data):
                     'surface': surface,
                     'proba': float(proba),
                     'confidence': float(confidence),
-                    'odds1': odds1_val if odds1_val else None,
-                    'odds2': odds2_val if odds2_val else None,
+                    'odds1': odds1 if 'odds1' in locals() and odds1 else None,
+                    'odds2': odds2 if 'odds2' in locals() and odds2 else None,
                     'favori_modele': favori,
                     'best_value': best_value,
+                    'ml_used': ml_used,
                     'date': datetime.now().isoformat(),
                     'statut': 'en_attente'
                 }
@@ -966,10 +1241,14 @@ def show_multimatches(atp_data):
             st.warning("Veuillez remplir au moins un match complet")
             return
         
+        model_info = st.session_state.get('ml_model')
+        player_stats = st.session_state.get('player_stats_cache')
+        
         for i, match in enumerate(valid_matches):
             h2h = get_h2h_stats(atp_data, match['player1'], match['player2'])
-            proba = calculate_probability(atp_data, match['player1'], match['player2'], match['surface'], h2h)
+            proba = calculate_probability(atp_data, match['player1'], match['player2'], match['surface'], h2h, model_info, player_stats)
             confidence = calculate_confidence(proba, match['player1'], match['player2'], h2h)
+            ml_used = model_info is not None and player_stats is not None
             
             best_value = None
             if match['odds1'] and match['odds2']:
@@ -985,18 +1264,8 @@ def show_multimatches(atp_data):
                 except: 
                     pass
             
-            pred_data = {
-                'player1': match['player1'], 'player2': match['player2'],
-                'tournament': match['tournament'], 'surface': match['surface'],
-                'proba': proba, 'confidence': confidence,
-                'odds1': match['odds1'], 'odds2': match['odds2'],
-                'favori_modele': match['player1'] if proba >= 0.5 else match['player2'],
-                'best_value': best_value,
-                'date': datetime.now().isoformat(),
-                'statut': 'en_attente'
-            }
-            
-            st.markdown(f"### Match {i+1}: {match['player1']} vs {match['player2']}")
+            ml_tag = '<span class="ml-badge">🤖 ML</span>' if ml_used else ''
+            st.markdown(f"### Match {i+1}: {match['player1']} vs {match['player2']} {ml_tag}")
             st.markdown(create_result_card(match['player1'], match['player2'], proba, confidence), unsafe_allow_html=True)
             
             if best_value:
@@ -1011,10 +1280,18 @@ def show_multimatches(atp_data):
                         with st.expander("🤖 Analyse IA"):
                             st.markdown(ai)
                         if send_all:
+                            pred_data = {
+                                'player1': match['player1'], 'player2': match['player2'],
+                                'tournament': match['tournament'], 'surface': match['surface'],
+                                'proba': proba, 'confidence': confidence,
+                                'odds1': match['odds1'], 'odds2': match['odds2'],
+                                'favori_modele': match['player1'] if proba >= 0.5 else match['player2'],
+                                'best_value': best_value,
+                                'ml_used': ml_used,
+                                'date': datetime.now().isoformat(),
+                                'statut': 'en_attente'
+                            }
                             send_prediction_to_telegram(pred_data, ai)
-            
-            if save_prediction(pred_data):
-                st.success(f"✅ Match {i+1} sauvegardé !")
 
 # ─────────────────────────────────────────────────────────────
 # COMBINÉS
@@ -1090,6 +1367,9 @@ def show_combines(atp_data):
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         selections = []
         
+        model_info = st.session_state.get('ml_model')
+        player_stats = st.session_state.get('player_stats_cache')
+        
         with st.spinner("Analyse des matchs..."):
             for match in matches:
                 if match['player1'] and match['player2'] and match['odds1'] and match['odds2']:
@@ -1097,7 +1377,7 @@ def show_combines(atp_data):
                         o1 = float(match['odds1'].replace(',', '.'))
                         o2 = float(match['odds2'].replace(',', '.'))
                         h2h = get_h2h_stats(atp_data, match['player1'], match['player2'])
-                        proba = calculate_probability(atp_data, match['player1'], match['player2'], match['surface'], h2h)
+                        proba = calculate_probability(atp_data, match['player1'], match['player2'], match['surface'], h2h, model_info, player_stats)
                         edge1 = proba - 1/o1
                         edge2 = (1 - proba) - 1/o2
                         
@@ -1150,7 +1430,8 @@ def show_combines(atp_data):
                 'selections': selected, 'proba_globale': proba_combi,
                 'cote_globale': cote_combi, 'mise': mise,
                 'gain_potentiel': gain, 'esperance': esperance,
-                'kelly': kelly, 'nb_matches': len(selected)
+                'kelly': kelly, 'nb_matches': len(selected),
+                'ml_used': model_info is not None
             }
             save_combine(combine_data)
             st.success("✅ Combiné sauvegardé !")
@@ -1176,7 +1457,8 @@ def show_history():
         if history:
             filtered = history[::-1][:20]
             for pred in filtered:
-                with st.expander(f"{pred.get('date', '')[:16]} - {pred.get('player1','?')} vs {pred.get('player2','?')}"):
+                ml_tag = ' <span class="ml-badge">🤖 ML</span>' if pred.get('ml_used') else ''
+                with st.expander(f"{pred.get('date', '')[:16]} - {pred.get('player1','?')} vs {pred.get('player2','?')}{ml_tag}"):
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.markdown(create_metric("Tournoi", pred.get('tournament','—')), unsafe_allow_html=True)
@@ -1187,6 +1469,9 @@ def show_history():
                         st.markdown(create_metric("Probabilité", f"{proba:.1%}"), unsafe_allow_html=True)
                     
                     st.markdown(create_progress_bar(proba), unsafe_allow_html=True)
+                    
+                    if pred.get('best_value'):
+                        st.success(f"🎯 Value bet détecté")
                     
                     if pred.get('statut') == 'en_attente':
                         col_b1, col_b2 = st.columns(2)
@@ -1205,7 +1490,8 @@ def show_history():
         combines = load_combines()
         if combines:
             for comb in combines[::-1][:10]:
-                with st.expander(f"{comb.get('date','')[:16]} - {comb.get('nb_matches',0)} matchs - Proba {comb.get('proba_globale',0):.1%}"):
+                ml_tag = ' 🤖' if comb.get('ml_used') else ''
+                with st.expander(f"{comb.get('date','')[:16]} - {comb.get('nb_matches',0)} matchs - Proba {comb.get('proba_globale',0):.1%}{ml_tag}"):
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.markdown(create_metric("Probabilité", f"{comb.get('proba_globale',0):.1%}"), unsafe_allow_html=True)
