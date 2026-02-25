@@ -426,12 +426,15 @@ def create_result_card(player1, player2, proba, confidence):
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_atp_data():
-    if not DATA_DIR.exists(): return None
+    if not DATA_DIR.exists(): 
+        return pd.DataFrame()  # Retourne DataFrame vide au lieu de None
     csv_files = list(DATA_DIR.glob("*.csv"))
-    if not csv_files: return None
+    if not csv_files: 
+        return pd.DataFrame()
     atp_dfs = []
     for f in csv_files:
-        if 'wta' in f.name.lower(): continue
+        if 'wta' in f.name.lower(): 
+            continue
         try:
             df = None
             for enc in ['utf-8', 'latin-1', 'cp1252']:
@@ -442,13 +445,15 @@ def load_atp_data():
                     try:
                         df = pd.read_csv(f, sep=';', encoding=enc, on_bad_lines='skip', low_memory=False)
                         break
-                    except: continue
+                    except: 
+                        continue
             if df is not None and 'winner_name' in df.columns and 'loser_name' in df.columns:
                 atp_dfs.append(df)
-        except: continue
+        except: 
+            continue
     if atp_dfs:
         return pd.concat(atp_dfs, ignore_index=True)
-    return None
+    return pd.DataFrame()
 
 @st.cache_data(ttl=7200)
 def precompute_player_stats_ml(_df):
@@ -486,15 +491,18 @@ def precompute_player_stats_ml(_df):
     return stats
 
 def get_player_stats(df, player, surface=None):
-    if df is None or player is None: return None
+    if df is None or df.empty or player is None: 
+        return None
     player_clean = player.strip()
     winner_col = 'winner_name' if 'winner_name' in df.columns else None
     loser_col = 'loser_name' if 'loser_name' in df.columns else None
-    if not winner_col or not loser_col: return None
+    if not winner_col or not loser_col: 
+        return None
     dw = df[winner_col].astype(str).str.strip()
     dl = df[loser_col].astype(str).str.strip()
     matches = df[(dw == player_clean) | (dl == player_clean)]
-    if len(matches) == 0: return None
+    if len(matches) == 0: 
+        return None
     wins = len(matches[dw == player_clean])
     total = len(matches)
     return {
@@ -504,16 +512,19 @@ def get_player_stats(df, player, surface=None):
     }
 
 def get_h2h_stats(df, player1, player2):
-    if df is None or player1 is None or player2 is None: return None
+    if df is None or df.empty or player1 is None or player2 is None: 
+        return None
     p1 = player1.strip()
     p2 = player2.strip()
     winner_col = 'winner_name' if 'winner_name' in df.columns else None
     loser_col = 'loser_name' if 'loser_name' in df.columns else None
-    if not winner_col or not loser_col: return None
+    if not winner_col or not loser_col: 
+        return None
     dw = df[winner_col].astype(str).str.strip()
     dl = df[loser_col].astype(str).str.strip()
     h2h = df[((dw == p1) & (dl == p2)) | ((dw == p2) & (dl == p1))]
-    if len(h2h) == 0: return None
+    if len(h2h) == 0: 
+        return None
     return {
         'total_matches': len(h2h),
         f'{p1}_wins': len(h2h[dw == p1]),
@@ -542,11 +553,13 @@ def calculate_confidence(proba, player1, player2, h2h):
 # HISTORIQUE
 # ─────────────────────────────────────────────────────────────
 def load_history():
-    if not HIST_FILE.exists(): return []
+    if not HIST_FILE.exists(): 
+        return []
     try:
         with open(HIST_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except: return []
+    except: 
+        return []
 
 def save_prediction(pred_data):
     history = load_history()
@@ -555,12 +568,14 @@ def save_prediction(pred_data):
     pred_data['statut'] = 'en_attente'
     pred_data['id'] = hashlib.md5(f"{pred_data['date']}{pred_data.get('player1','')}{pred_data.get('player2','')}".encode()).hexdigest()[:8]
     history.append(pred_data)
-    if len(history) > 1000: history = history[-1000:]
+    if len(history) > 1000: 
+        history = history[-1000:]
     try:
         with open(HIST_FILE, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2)
         return True
-    except: return False
+    except: 
+        return False
 
 def update_prediction_status(pred_id, statut):
     history = load_history()
@@ -572,14 +587,17 @@ def update_prediction_status(pred_id, statut):
         with open(HIST_FILE, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2)
         return True
-    except: return False
+    except: 
+        return False
 
 def load_combines():
-    if not COMB_HIST_FILE.exists(): return []
+    if not COMB_HIST_FILE.exists(): 
+        return []
     try:
         with open(COMB_HIST_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except: return []
+    except: 
+        return []
 
 def save_combine(combine_data):
     combines = load_combines()
@@ -587,12 +605,14 @@ def save_combine(combine_data):
     combine_data['statut'] = 'en_attente'
     combine_data['id'] = hashlib.md5(f"{combine_data['date']}{len(combines)}".encode()).hexdigest()[:8]
     combines.append(combine_data)
-    if len(combines) > 200: combines = combines[-200:]
+    if len(combines) > 200: 
+        combines = combines[-200:]
     try:
         with open(COMB_HIST_FILE, 'w', encoding='utf-8') as f:
             json.dump(combines, f, indent=2)
         return True
-    except: return False
+    except: 
+        return False
 
 def load_user_stats():
     if not USER_STATS_FILE.exists():
@@ -605,7 +625,8 @@ def load_user_stats():
     try:
         with open(USER_STATS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except: return {}
+    except: 
+        return {}
 
 # ─────────────────────────────────────────────────────────────
 # INTERFACE PRINCIPALE
@@ -618,7 +639,7 @@ def main():
     with st.spinner("Chargement des données..."):
         atp_data = load_atp_data()
 
-    if atp_data is not None and 'player_stats_cache' not in st.session_state:
+    if not atp_data.empty and 'player_stats_cache' not in st.session_state:
         with st.spinner("Calcul des statistiques..."):
             st.session_state['player_stats_cache'] = precompute_player_stats_ml(atp_data)
 
@@ -638,7 +659,7 @@ def main():
             label_visibility="collapsed"
         )
         
-        if atp_data is not None:
+        if not atp_data.empty:
             st.markdown(create_badge(f"ATP: {len(atp_data):,} matchs", COLORS['primary']), unsafe_allow_html=True)
         
         token, _ = get_telegram_config()
@@ -670,7 +691,7 @@ def show_dashboard(atp_data):
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown(create_metric("Matchs ATP", format_number(len(atp_data) if atp_data else 0)), unsafe_allow_html=True)
+        st.markdown(create_metric("Matchs ATP", format_number(len(atp_data) if not atp_data.empty else 0)), unsafe_allow_html=True)
     with col2:
         history = load_history()
         st.markdown(create_metric("Prédictions", len(history)), unsafe_allow_html=True)
@@ -684,7 +705,7 @@ def show_dashboard(atp_data):
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    if atp_data is not None and 'surface' in atp_data.columns:
+    if not atp_data.empty and 'surface' in atp_data.columns:
         st.markdown("<h3>📊 Répartition des surfaces</h3>", unsafe_allow_html=True)
         surface_counts = atp_data['surface'].value_counts()
         st.bar_chart(surface_counts)
@@ -700,7 +721,7 @@ def show_predictions(atp_data):
     surface = "Hard"
     
     with col1:
-        if atp_data is not None and not atp_data.empty:
+        if not atp_data.empty:
             winner_col = 'winner_name' if 'winner_name' in atp_data.columns else None
             loser_col = 'loser_name' if 'loser_name' in atp_data.columns else None
             if winner_col and loser_col:
@@ -734,7 +755,7 @@ def show_predictions(atp_data):
             confidence = calculate_confidence(proba, p1, p2, h2h)
             
             best_value = None
-            if 'odds1' in dir() and odds1 and odds2:
+            if 'odds1' in locals() and odds1 and odds2:
                 try:
                     o1 = float(odds1.replace(',', '.'))
                     o2 = float(odds2.replace(',', '.'))
@@ -744,7 +765,8 @@ def show_predictions(atp_data):
                         best_value = {'joueur': p1, 'edge': edge1, 'cote': o1, 'proba': proba}
                     elif edge2 > edge1 and edge2 > MIN_EDGE_COMBINE:
                         best_value = {'joueur': p2, 'edge': edge2, 'cote': o2, 'proba': 1 - proba}
-                except: pass
+                except: 
+                    pass
             
             favori = p1 if proba >= 0.5 else p2
             
@@ -776,8 +798,8 @@ def show_predictions(atp_data):
                     'tournament': tournament or "Inconnu",
                     'surface': surface,
                     'proba': proba, 'confidence': confidence,
-                    'odds1': odds1 if 'odds1' in dir() and odds1 else None,
-                    'odds2': odds2 if 'odds2' in dir() and odds2 else None,
+                    'odds1': odds1 if 'odds1' in locals() and odds1 else None,
+                    'odds2': odds2 if 'odds2' in locals() and odds2 else None,
                     'favori_modele': favori, 'best_value': best_value,
                 }
                 if save_prediction(pred_data):
@@ -803,7 +825,7 @@ def show_multimatches(atp_data):
     with col3:
         send_all = st.checkbox("📱 Envoyer tout sur Telegram", False)
     
-    if atp_data is None or atp_data.empty:
+    if atp_data.empty:
         st.warning("Données non disponibles")
         return
     
@@ -869,7 +891,8 @@ def show_multimatches(atp_data):
                         best_value = {'joueur': match['player1'], 'edge': edge1, 'cote': o1, 'proba': proba}
                     elif edge2 > edge1 and edge2 > MIN_EDGE_COMBINE:
                         best_value = {'joueur': match['player2'], 'edge': edge2, 'cote': o2, 'proba': 1 - proba}
-                except: pass
+                except: 
+                    pass
             
             favori = match['player1'] if proba >= 0.5 else match['player2']
             
@@ -920,7 +943,7 @@ def show_combines(atp_data):
     with col4:
         send_tg = st.checkbox("📱 Envoyer Telegram", False)
     
-    if atp_data is None or atp_data.empty:
+    if atp_data.empty:
         return
     
     winner_col = 'winner_name' if 'winner_name' in atp_data.columns else None
@@ -993,7 +1016,8 @@ def show_combines(atp_data):
                                 'match': f"{match['player1']} vs {match['player2']}",
                                 'joueur': match['player2'], 'proba': 1 - proba, 'cote': o2, 'edge': edge2
                             })
-                    except: pass
+                    except: 
+                        pass
         
         if len(selections) >= 2:
             selections.sort(key=lambda x: x['edge'], reverse=True)
