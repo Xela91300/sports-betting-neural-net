@@ -890,6 +890,70 @@ def update_result(idx, result):
             pass
 
 # ─────────────────────────────────────────────────────────────
+# HISTORIQUE DES COMBINÉS
+# ─────────────────────────────────────────────────────────────
+COMB_HIST_FILE = ROOT_DIR / "combines_history.json"
+
+def load_comb_history():
+    """Charge l'historique des combinés."""
+    if not COMB_HIST_FILE.exists():
+        return []
+    try:
+        with open(COMB_HIST_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def save_combine(selected_matches, proba_globale, cote_globale, mise, esperance, kelly, verdict):
+    """Sauvegarde un combiné dans l'historique."""
+    history = load_comb_history()
+    entry = {
+        "date": datetime.now().isoformat(),
+        "nb_matches": len(selected_matches),
+        "matches": [
+            {
+                "j1": m["match"]["j1"],
+                "j2": m["match"]["j2"],
+                "joueur": m["joueur"],
+                "tournoi": m["match"]["tournoi"],
+                "surface": m["match"]["surface"],
+                "proba": round(m["proba"], 4),
+                "cote": round(m["cote"], 2),
+                "edge": round(m["edge"], 4),
+                "confiance": m["conf"]
+            }
+            for m in selected_matches
+        ],
+        "proba_globale": round(proba_globale, 4),
+        "cote_globale": round(cote_globale, 2),
+        "mise": mise,
+        "gain_potentiel": round(mise * cote_globale, 2),
+        "esperance": round(esperance, 2),
+        "kelly": round(kelly, 4),
+        "verdict": verdict,
+        "resultat": None  # "gagné", "perdu", ou None si pas encore joué
+    }
+    history.append(entry)
+    try:
+        with open(COMB_HIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def update_combine_result(date, resultat):
+    """Met à jour le résultat d'un combiné."""
+    history = load_comb_history()
+    for h in history:
+        if h["date"] == date:
+            h["resultat"] = resultat
+            break
+    try:
+        with open(COMB_HIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+# ─────────────────────────────────────────────────────────────
 # ANALYSE CLAUDE AI
 # ─────────────────────────────────────────────────────────────
 def build_ai_prompt(j1, j2, s1, s2, h2h, surface, level, proba, tour):
@@ -1462,13 +1526,14 @@ if not atp_ok and not wta_ok:
 # ─────────────────────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────────────────────
-tab_pred, tab_multi, tab_comb, tab_explore, tab_models, tab_hist = st.tabs([
+tab_pred, tab_multi, tab_comb, tab_explore, tab_models, tab_hist, tab_comb_hist = st.tabs([
     "⚡  PREDICT",
     "📋  MULTI-MATCH",
     "🎰  COMBINÉ",
     "🔍  EXPLORE",
     "📊  MODELS",
-    "📜  HISTORIQUE",
+    "📜  PREDICTIONS",
+    "🎯  COMBINÉS",
 ])
 
 # ══════════════════════════════════════════════════════════════
@@ -3308,7 +3373,18 @@ with tab_comb:
                             unsafe_allow_html=True
                         )
 
-                        # Sauvegarde dans l'historique
+                        # Sauvegarde du combiné dans l'historique
+                        save_combine(
+                            selected_matches=selected,
+                            proba_globale=proba_combi,
+                            cote_globale=cote_combi,
+                            mise=mise_comb,
+                            esperance=esperance,
+                            kelly=kelly,
+                            verdict=verdict_text
+                        )
+
+                        # Sauvegarde individuelle des sélections dans l'historique
                         for s in selected:
                             save_prediction(
                                 s["match"]["j1"], s["match"]["j2"],
@@ -3499,7 +3575,7 @@ with tab_models:
         """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
-# TAB 6 — HISTORIQUE
+# TAB 6 — HISTORIQUE DES PRÉDICTIONS
 # ══════════════════════════════════════════════════════════════
 with tab_hist:
     st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
@@ -3701,6 +3777,141 @@ with tab_hist:
                 mime="text/csv",
                 key="hist_dl"
             )
+
+# ══════════════════════════════════════════════════════════════
+# TAB 7 — HISTORIQUE DES COMBINÉS
+# ══════════════════════════════════════════════════════════════
+with tab_comb_hist:
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <div class="card-title" style="margin-bottom:6px;">🎯 Historique des Combinés</div>
+        <div style="font-size:0.82rem; color:#4a5e60;">
+            Tous les combinés que tu as générés · Sauvegarde automatique
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    comb_history = load_comb_history()
+
+    if not comb_history:
+        st.markdown("""
+        <div class="card" style="text-align:center; padding:40px; border-color:#1a2a2c;">
+            <div style="font-size:2rem; margin-bottom:12px;">🎰</div>
+            <div style="color:#4a5e60; font-size:0.85rem; letter-spacing:2px; text-transform:uppercase;">
+                Aucun combiné enregistré
+            </div>
+            <div style="color:#2a3e40; font-size:0.75rem; margin-top:8px;">
+                Génère un combiné dans l'onglet COMBINÉ pour commencer
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Inverser pour avoir le plus récent en premier
+        comb_history.reverse()
+
+        for i, ch in enumerate(comb_history):
+            date_str = ch["date"][:16].replace("T", " ")
+            nb_m = ch["nb_matches"]
+            proba = ch["proba_globale"]
+            cote = ch["cote_globale"]
+            mise = ch["mise"]
+            gain = ch["gain_potentiel"]
+            esperance = ch["esperance"]
+            verdict = ch["verdict"]
+            resultat = ch.get("resultat")
+
+            # Couleurs selon le verdict et le résultat
+            if resultat == "gagné":
+                main_color = "#3dd68c"
+                status_icon = "✅"
+                status_text = "GAGNÉ"
+            elif resultat == "perdu":
+                main_color = "#e07878"
+                status_icon = "❌"
+                status_text = "PERDU"
+            else:
+                main_color = "#f5c842" if "RISQUÉ" in verdict else "#3dd68c" if "INTELLIGENT" in verdict else "#e07878"
+                status_icon = "⏳"
+                status_text = "EN ATTENTE"
+
+            with st.expander(f"🎯 Combiné du {date_str} · {nb_m} matchs · Proba {proba:.1%}", expanded=False):
+                # En-tête avec métriques
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                with col_m1:
+                    st.markdown(
+                        f'<div style="text-align:center; padding:10px; background:#111a1c; border-radius:8px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">PROBA</div>'
+                        f'<div style="font-size:1.3rem; font-weight:700; color:{main_color};">{proba:.1%}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with col_m2:
+                    st.markdown(
+                        f'<div style="text-align:center; padding:10px; background:#111a1c; border-radius:8px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">COTE</div>'
+                        f'<div style="font-size:1.3rem; font-weight:700; color:#e8e0d0;">{cote:.2f}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with col_m3:
+                    esp_color = "#3dd68c" if esperance > 0 else "#e07878"
+                    st.markdown(
+                        f'<div style="text-align:center; padding:10px; background:#111a1c; border-radius:8px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">ESPÉRANCE</div>'
+                        f'<div style="font-size:1.3rem; font-weight:700; color:{esp_color};">{esperance:+.2f}€</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with col_m4:
+                    st.markdown(
+                        f'<div style="text-align:center; padding:10px; background:#111a1c; border-radius:8px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">STATUT</div>'
+                        f'<div style="font-size:1.1rem; font-weight:700; color:{main_color};">{status_icon} {status_text}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # Détail des sélections
+                st.markdown("---")
+                st.markdown("**📋 Sélections**")
+                
+                for s in ch["matches"]:
+                    edge_color = "#3dd68c" if s["edge"] > 0.04 else "#f5c842"
+                    st.markdown(
+                        f'<div style="display:flex; align-items:center; gap:15px; padding:8px; '
+                        f'background:#0e1517; border-radius:5px; margin-bottom:3px;">'
+                        f'<div style="flex:2;"><span style="font-weight:600; color:#e8e0d0;">{s["joueur"]}</span>'
+                        f'<br><span style="font-size:0.65rem; color:#4a5e60;">{s["j1"]} vs {s["j2"]} · {s["tournoi"]}</span></div>'
+                        f'<div style="text-align:center; min-width:50px;">'
+                        f'<span style="font-size:0.6rem; color:#4a5e60;">PROBA</span><br>'
+                        f'<span style="font-size:0.9rem; font-weight:600;">{s["proba"]:.0%}</span>'
+                        f'</div>'
+                        f'<div style="text-align:center; min-width:40px;">'
+                        f'<span style="font-size:0.6rem; color:#4a5e60;">COTE</span><br>'
+                        f'<span style="font-size:0.9rem;">{s["cote"]:.2f}</span>'
+                        f'</div>'
+                        f'<div style="text-align:center; min-width:50px;">'
+                        f'<span style="font-size:0.6rem; color:#4a5e60;">EDGE</span><br>'
+                        f'<span style="font-size:0.9rem; color:{edge_color};">{s["edge"]*100:+.1f}%</span>'
+                        f'</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # Boutons pour mettre à jour le résultat
+                if not resultat:
+                    col_btn1, col_btn2, _ = st.columns([1, 1, 2])
+                    with col_btn1:
+                        if st.button(f"✅ Combiné gagné", key=f"comb_win_{i}"):
+                            update_combine_result(ch["date"], "gagné")
+                            st.rerun()
+                    with col_btn2:
+                        if st.button(f"❌ Combiné perdu", key=f"comb_loss_{i}"):
+                            update_combine_result(ch["date"], "perdu")
+                            st.rerun()
+
+                st.markdown("---")
 
 # ─────────────────────────────────────────────────────────────
 # FOOTER
