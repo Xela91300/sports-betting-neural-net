@@ -9,7 +9,278 @@ import time
 import hashlib
 import base64
 import warnings
+import asyncio
+import nest_asyncio
+import os
+
+nest_asyncio.apply()  # Important pour éviter les conflits asyncio
+
 warnings.filterwarnings('ignore')
+
+# ─────────────────────────────────────────────────────────────
+# CONFIGURATION (À MODIFIER ICI DIRECTEMENT)
+# ─────────────────────────────────────────────────────────────
+
+# Configuration Telegram - À REMPLACER AVEC TES VRAIES VALEURS
+TELEGRAM_BOT_TOKEN = "8674866189:AAH37S6h5jizMBpi4Tc55T5FpKU-98Qe0jQ"  # Ton token
+TELEGRAM_CHAT_ID = "5213471678"  # Ton chat ID (pour groupe, mettre le tiret devant ex: "-123456789")
+
+# Configuration Groq (optionnel)
+GROQ_API_KEY = ""  # Ta clé Groq si tu en as une
+
+# ─────────────────────────────────────────────────────────────
+# TELEGRAM INTEGRATION
+# ─────────────────────────────────────────────────────────────
+try:
+    from telegram import Bot
+    from telegram.error import TelegramError
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+
+def get_telegram_config():
+    """Récupère la config Telegram depuis les variables"""
+    # Priorité aux variables d'environnement
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN)
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
+    
+    # Ne retourner que si les deux sont présents
+    if token and chat_id:
+        return token, chat_id
+    return None, None
+
+async def send_telegram_message_async(message, parse_mode='HTML'):
+    """Envoie un message Telegram de façon asynchrone"""
+    token, chat_id = get_telegram_config()
+    
+    if not token or not chat_id or not TELEGRAM_AVAILABLE:
+        return False
+    
+    try:
+        bot = Bot(token=token)
+        await bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
+        )
+        return True
+    except Exception as e:
+        print(f"Erreur Telegram: {e}")
+        return False
+
+def send_telegram_message(message, parse_mode='HTML'):
+    """Wrapper synchrone pour l'envoi Telegram"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(send_telegram_message_async(message, parse_mode))
+        loop.close()
+        return result
+    except Exception as e:
+        print(f"Erreur envoi Telegram: {e}")
+        return False
+
+def format_prediction_message(pred_data, result_data=None):
+    """Formate une prédiction pour Telegram avec des émoticônes"""
+    emoji_map = {
+        'Hard': '🟦',
+        'Clay': '🟧',
+        'Grass': '🟩'
+    }
+    
+    surface_emoji = emoji_map.get(pred_data.get('surface', ''), '🎾')
+    ml_tag = "🤖 " if pred_data.get('ml_used') else ""
+    
+    # Barre de progression visuelle
+    proba = pred_data.get('proba', 0.5)
+    bar_length = 10
+    filled = int(proba * bar_length)
+    bar = '█' * filled + '░' * (bar_length - filled)
+    
+    message = f"""
+<b>{ml_tag}🎾 PRÉDICTION TENNISIQ</b>
+
+<b>Match:</b> {pred_data.get('player1', '?')} vs {pred_data.get('player2', '?')}
+<b>Tournoi:</b> {pred_data.get('tournament', '?')}
+<b>Surface:</b> {surface_emoji} {pred_data.get('surface', '?')}
+
+<b>Probabilités:</b>
+{bar}  {proba:.1%} / {1-proba:.1%}
+
+• {pred_data.get('player1', 'J1')}: <b>{proba:.1%}</b>
+• {pred_data.get('player2', 'J2')}: <b>{1-proba:.1%}</b>
+
+<b>Favori du modèle:</b> {pred_data.get('favori_modele', '?')}
+<b>Confiance:</b> {'🟢' if pred_data.get('confidence', 0) >= 70 else '🟡' if pred_data.get('confidence', 0) >= 50 else '🔴'} {pred_data.get('confidence', 0):.0f}/100
+"""
+    
+    # Ajouter les cotes si disponibles
+    if pred_data.get('odds1') and pred_data.get('odds2'):
+        message += f"""
+<b>Cotes bookmaker:</b>
+• {pred_data.get('player1', 'J1')}: <code>{pred_data.get('odds1')}</code>
+• {pred_data.get('player2', 'J2')}: <code>{pred_data.get('odds2')}</code>
+"""
+    
+    # Ajouter le value bet si détecté
+    if pred_data.get('best_value'):
+        bv = pred_data['best_value']
+        edge_color = '🟢' if bv['edge'] > 0.05 else '🟡'
+        message += f"""
+<b>🎯 VALUE BET DÉTECTÉ!</b>
+{edge_color} <b>{bv['joueur']}</b> à <b>{bv['cote']:.2f}</b>
+Edge: <b>{bv['edge']*100:+.1f}%</b>
+"""
+    
+    # Ajouter le résultat si fourni
+    if result_data:
+        if result_data.get('correct'):
+            message += f"\n✅ <b>RÉSULTAT: CORRECT</b> ({result_data.get('winner')} a gagné)"
+        else:
+            message += f"\n❌ <b>RÉSULTAT: INCORRECT</b> ({result_data.get('winner')} a gagné)"
+    
+    # Hashtags
+    message += f"\n\n#TennisIQ #{pred_data.get('surface', 'Tennis')}"
+    
+    return message
+
+def format_combine_message(combine_data):
+    """Formate un combiné pour Telegram"""
+    proba = combine_data.get('proba_globale', 0)
+    bar_length = 10
+    filled = int(proba * bar_length)
+    bar = '█' * filled + '░' * (bar_length - filled)
+    
+    message = f"""
+<b>🎰 COMBINÉ TENNISIQ</b>
+
+<b>📊 Statistiques:</b>
+{bar}  {proba:.1%}
+• {combine_data.get('nb_matches', 0)} sélections
+• Cote combinée: <b>{combine_data.get('cote_globale', 0):.2f}</b>
+• Espérance: <b>{combine_data.get('esperance', 0):+.2f}€</b>
+• Kelly: <b>{combine_data.get('kelly', 0)*100:.1f}%</b>
+
+<b>📋 Sélections:</b>
+"""
+    
+    for i, sel in enumerate(combine_data.get('selections', [])[:5], 1):
+        edge_color = '🟢' if sel.get('edge', 0) > 0.05 else '🟡'
+        message += f"\n{i}. {edge_color} {sel.get('joueur', '?')} @ {sel.get('cote', 0):.2f} (edge: {sel.get('edge', 0)*100:+.1f}%)"
+    
+    if combine_data.get('ml_used'):
+        message += f"\n\n🤖 Prédiction ML calibrée"
+    
+    message += f"\n\n#TennisIQ #Combiné"
+    
+    return message
+
+def format_stats_message():
+    """Formate les statistiques pour Telegram"""
+    stats = load_user_stats()
+    history = load_history()
+    
+    total = stats.get('total_predictions', 0)
+    correct = stats.get('correct_predictions', 0)
+    accuracy = (correct / total * 100) if total > 0 else 0
+    
+    # Dernières 10
+    recent = history[-10:] if len(history) >= 10 else history
+    recent_correct = 0
+    for pred in recent:
+        if pred.get('statut') in ['joueur1_gagne', 'joueur2_gagne']:
+            favori = pred.get('favori_modele', pred.get('player1'))
+            if (pred.get('statut') == 'joueur1_gagne' and favori == pred.get('player1')) or \
+               (pred.get('statut') == 'joueur2_gagne' and favori == pred.get('player2')):
+                recent_correct += 1
+    recent_acc = (recent_correct / len(recent) * 100) if recent else 0
+    
+    # Stats par surface
+    surface_stats = {}
+    for pred in history:
+        if pred.get('statut') in ['joueur1_gagne', 'joueur2_gagne']:
+            surface = pred.get('surface', 'Inconnu')
+            if surface not in surface_stats:
+                surface_stats[surface] = {'total': 0, 'correct': 0}
+            surface_stats[surface]['total'] += 1
+            favori = pred.get('favori_modele', pred.get('player1'))
+            if (pred.get('statut') == 'joueur1_gagne' and favori == pred.get('player1')) or \
+               (pred.get('statut') == 'joueur2_gagne' and favori == pred.get('player2')):
+                surface_stats[surface]['correct'] += 1
+    
+    # Barre de progression globale
+    bar_length = 10
+    filled = int(accuracy / 10)
+    bar = '█' * filled + '░' * (bar_length - filled)
+    
+    message = f"""
+<b>📊 STATISTIQUES TENNISIQ</b>
+
+<b>Global:</b>
+{bar}  {accuracy:.1f}%
+• Prédictions: {total}
+• Correctes: {correct}
+• Série actuelle: {stats.get('current_streak', 0)} {'🔥' if stats.get('current_streak', 0) > 3 else ''}
+• Meilleure série: {stats.get('best_streak', 0)}
+
+<b>Dernières 10:</b>
+• Correctes: {recent_correct}/{len(recent)}
+• Précision: {recent_acc:.1f}%
+
+<b>Par surface:</b>
+"""
+    
+    emoji_surface = {'Hard': '🟦', 'Clay': '🟧', 'Grass': '🟩'}
+    for surface, s in surface_stats.items():
+        if s['total'] > 0:
+            surf_acc = (s['correct'] / s['total'] * 100)
+            surf_emoji = emoji_surface.get(surface, '🎾')
+            message += f"• {surf_emoji} {surface}: {surf_acc:.1f}% ({s['correct']}/{s['total']})\n"
+    
+    message += f"\n#TennisIQ #Stats"
+    
+    return message
+
+def send_prediction_to_telegram(pred_data, result_data=None):
+    """Envoie une prédiction sur Telegram"""
+    message = format_prediction_message(pred_data, result_data)
+    return send_telegram_message(message)
+
+def send_combine_to_telegram(combine_data):
+    """Envoie un combiné sur Telegram"""
+    message = format_combine_message(combine_data)
+    return send_telegram_message(message)
+
+def send_stats_to_telegram():
+    """Envoie les statistiques sur Telegram"""
+    message = format_stats_message()
+    return send_telegram_message(message)
+
+def test_telegram_connection():
+    """Teste la connexion Telegram"""
+    token, chat_id = get_telegram_config()
+    
+    if not token or not chat_id:
+        return False, "❌ Configuration Telegram manquante"
+    
+    test_message = """
+<b>🔧 TEST DE CONNEXION RÉUSSI!</b>
+
+✅ Bot configuré correctement
+📱 Prêt à recevoir des prédictions
+🤖 TennisIQ Bot actif
+
+Version: 3.0.0
+Date: {date}
+
+#TennisIQ #Test
+""".format(date=datetime.now().strftime("%d/%m/%Y %H:%M"))
+    
+    if send_telegram_message(test_message):
+        return True, "✅ Connexion Telegram réussie ! Message de test envoyé."
+    else:
+        return False, "❌ Échec de l'envoi du message de test"
 
 # ─────────────────────────────────────────────────────────────
 # ML IMPORTS (OPTIONNEL)
@@ -293,11 +564,9 @@ except ImportError:
     GROQ_AVAILABLE = False
 
 def get_groq_key():
-    try:
-        return st.secrets["GROQ_API_KEY"]
-    except:
-        import os
-        return os.environ.get("GROQ_API_KEY", None)
+    """Récupère la clé Groq depuis les variables d'environnement ou la config directe"""
+    # Priorité aux variables d'environnement
+    return os.environ.get("GROQ_API_KEY", GROQ_API_KEY)
 
 def call_groq_api(prompt):
     if not GROQ_AVAILABLE:
@@ -1257,10 +1526,17 @@ def main():
         else:
             st.markdown(create_badge("🤖 sklearn absent", "danger"), unsafe_allow_html=True)
 
+        # Statut Telegram
+        token, chat_id = get_telegram_config()
+        if token and chat_id:
+            st.markdown(create_badge("📱 Telegram: OK", "success"), unsafe_allow_html=True)
+        else:
+            st.markdown(create_badge("📱 Telegram: Non configuré", "warning"), unsafe_allow_html=True)
+
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("""
         <div style="text-align: center; color: #6C7A89; font-size: 0.7rem;">
-            Version 3.0.0-ML<br>© 2024 TennisIQ Pro
+            Version 3.1.0-Telegram<br>© 2024 TennisIQ Pro
         </div>
         """, unsafe_allow_html=True)
 
@@ -1283,7 +1559,7 @@ def main():
 
 
 # ─────────────────────────────────────────────────────────────
-# PAGE MODÈLE ML (NOUVELLE)
+# PAGE MODÈLE ML
 # ─────────────────────────────────────────────────────────────
 def show_model_page(atp_data):
     """Page dédiée au modèle ML : entraînement, performance, backtesting."""
@@ -1660,7 +1936,7 @@ def show_dashboard(atp_data):
 
 
 # ─────────────────────────────────────────────────────────────
-# PRÉDICTIONS
+# PRÉDICTIONS (AVEC INTÉGRATION TELEGRAM)
 # ─────────────────────────────────────────────────────────────
 def show_predictions(atp_data):
     st.markdown("<h2>🎯 Prédiction Simple</h2>", unsafe_allow_html=True)
@@ -1714,6 +1990,24 @@ def show_predictions(atp_data):
                     with st.expander("📊 Cotes bookmaker (optionnel)"):
                         odds1 = st.text_input(f"Cote {player1}", key="pred_odds1", placeholder="1.75")
                         odds2 = st.text_input(f"Cote {player2}", key="pred_odds2", placeholder="2.10")
+
+                    # Nouvelle section Telegram
+                    with st.expander("📱 Notifications Telegram"):
+                        send_telegram = st.checkbox("Envoyer la prédiction sur Telegram", value=False)
+                        col_t1, col_t2 = st.columns(2)
+                        with col_t1:
+                            if st.button("📊 Stats", key="telegram_stats_btn", use_container_width=True):
+                                if send_stats_to_telegram():
+                                    st.success("📊 Statistiques envoyées sur Telegram !")
+                                else:
+                                    st.error("❌ Échec de l'envoi")
+                        with col_t2:
+                            if st.button("🔧 Test", key="telegram_test_btn", use_container_width=True):
+                                success, msg = test_telegram_connection()
+                                if success:
+                                    st.success(msg)
+                                else:
+                                    st.error(msg)
 
                     if surface in SURFACE_CONFIG:
                         st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", surface.lower()), unsafe_allow_html=True)
@@ -1835,8 +2129,17 @@ def show_predictions(atp_data):
                     'favori_modele': favori, 'best_value': best_value,
                     'ml_used': ml_used,
                 }
+                
                 if save_prediction(pred_data):
                     st.success("✅ Prédiction sauvegardée !")
+                    
+                    # Envoi Telegram si demandé
+                    if send_telegram:
+                        with st.spinner("📤 Envoi sur Telegram..."):
+                            if send_prediction_to_telegram(pred_data):
+                                st.success("📱 Prédiction envoyée sur Telegram !")
+                            else:
+                                st.warning("⚠️ Échec de l'envoi Telegram (vérifie la configuration)")
                 else:
                     st.error("Erreur lors de la sauvegarde")
 
@@ -1874,7 +2177,7 @@ def show_predictions(atp_data):
 
 
 # ─────────────────────────────────────────────────────────────
-# MULTI-MATCHS
+# MULTI-MATCHS (AVEC INTÉGRATION TELEGRAM)
 # ─────────────────────────────────────────────────────────────
 def show_multimatches(atp_data):
     st.markdown("<h2>📊 Multi-matchs</h2>", unsafe_allow_html=True)
@@ -1885,13 +2188,15 @@ def show_multimatches(atp_data):
     if model_info:
         st.markdown(f'<div class="message-success">🤖 Modèle ML actif — Précision : {model_info["accuracy"]:.1%}</div>', unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         n_matches = st.number_input("Nombre de matchs", min_value=2, max_value=MAX_MATCHES_ANALYSIS, value=min(5, MAX_MATCHES_ANALYSIS))
     with col2:
         use_ai = st.checkbox("Activer l'analyse IA", value=True)
     with col3:
         auto_save = st.checkbox("Sauvegarde auto", value=True)
+    with col4:
+        send_telegram_all = st.checkbox("📱 Envoyer tout sur Telegram", value=False, help="Envoie toutes les prédictions sur Telegram")
 
     df = atp_data
     if df is None or df.empty:
@@ -1981,15 +2286,21 @@ def show_multimatches(atp_data):
 
                 favori = match['player1'] if proba >= 0.5 else match['player2']
 
+                pred_data = {
+                    'player1': match['player1'], 'player2': match['player2'],
+                    'tournament': match['tournament'], 'surface': match['surface'],
+                    'proba': proba, 'confidence': confidence, 'circuit': "ATP",
+                    'odds1': match['odds1'], 'odds2': match['odds2'],
+                    'favori_modele': favori, 'best_value': best_value,
+                    'ml_used': model_info is not None, 'source': 'multi_match'
+                }
+
                 if auto_save:
-                    save_prediction({
-                        'player1': match['player1'], 'player2': match['player2'],
-                        'tournament': match['tournament'], 'surface': match['surface'],
-                        'proba': proba, 'confidence': confidence, 'circuit': "ATP",
-                        'odds1': match['odds1'], 'odds2': match['odds2'],
-                        'favori_modele': favori, 'best_value': best_value,
-                        'ml_used': model_info is not None, 'source': 'multi_match'
-                    })
+                    save_prediction(pred_data)
+                
+                # Envoi Telegram si demandé
+                if send_telegram_all:
+                    send_prediction_to_telegram(pred_data)
 
                 results.append({
                     'match': i+1, 'player1': match['player1'], 'player2': match['player2'],
@@ -2078,7 +2389,7 @@ def show_multimatches(atp_data):
                         vb_txt = "Aucun value bet"
                     prompt = (f"Analyse ce match ATP : {result['player1']} vs {result['player2']} "
                               f"sur {result['surface']}. Proba ML : {result['player1']} {result['proba']:.1%} | "
-                              f"{result['player2']} {1-result['proba']:.1%}. {vb_txt}. 3 points clés en français.")
+                              f{result['player2']} {1-result['proba']:.1%}. {vb_txt}. 3 points clés en français.")
                     with st.spinner(f"Analyse match {result['match']}..."):
                         analysis = call_groq_api(prompt)
                     if analysis:
@@ -2087,7 +2398,7 @@ def show_multimatches(atp_data):
 
 
 # ─────────────────────────────────────────────────────────────
-# COMBINÉS
+# COMBINÉS (AVEC INTÉGRATION TELEGRAM)
 # ─────────────────────────────────────────────────────────────
 def show_combines(atp_data):
     st.markdown("<h2>🎰 Générateur de Combinés</h2>", unsafe_allow_html=True)
@@ -2098,15 +2409,17 @@ def show_combines(atp_data):
     if model_info:
         st.markdown(f'<div class="message-success">🤖 Modèle ML actif — Précision : {model_info["accuracy"]:.1%}</div>', unsafe_allow_html=True)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        n_matches = st.number_input("Matchs à analyser", min_value=2, max_value=MAX_MATCHES_COMBINE, value=min(5, MAX_MATCHES_COMBINE))
+        n_matches = st.number_input("Matchs", min_value=2, max_value=MAX_MATCHES_COMBINE, value=min(5, MAX_MATCHES_COMBINE))
     with col2:
         mise = st.number_input("Mise (€)", min_value=1.0, max_value=10000.0, value=10.0, step=5.0)
     with col3:
         use_ai = st.checkbox("Analyses IA", value=True)
     with col4:
         auto_select = st.checkbox("Auto-sélection", value=True)
+    with col5:
+        send_telegram = st.checkbox("📱 Envoyer sur Telegram", value=False, help="Envoie le combiné sur Telegram")
 
     df = atp_data
     if df is None or df.empty:
@@ -2226,8 +2539,22 @@ def show_combines(atp_data):
                 df_sel = pd.DataFrame([{'#': i+1, 'Joueur': s['joueur'], 'Match': s['match'], 'Proba': f"{s['proba']:.1%}", 'Cote': f"{s['cote']:.2f}", 'Edge': f"{s['edge']*100:+.1f}%"} for i, s in enumerate(selected)])
                 st.dataframe(df_sel, use_container_width=True, hide_index=True)
 
-                save_combine({'selections': selected, 'proba_globale': proba_combi, 'cote_globale': cote_combi, 'mise': mise, 'gain_potentiel': gain, 'esperance': esperance, 'kelly': kelly, 'nb_matches': len(selected), 'ml_used': model_info is not None})
+                combine_data = {
+                    'selections': selected, 'proba_globale': proba_combi, 'cote_globale': cote_combi, 
+                    'mise': mise, 'gain_potentiel': gain, 'esperance': esperance, 'kelly': kelly, 
+                    'nb_matches': len(selected), 'ml_used': model_info is not None
+                }
+                
+                save_combine(combine_data)
                 st.success("✅ Combiné sauvegardé !")
+                
+                # Envoi Telegram si demandé
+                if send_telegram:
+                    with st.spinner("📤 Envoi sur Telegram..."):
+                        if send_combine_to_telegram(combine_data):
+                            st.success("📱 Combiné envoyé sur Telegram !")
+                        else:
+                            st.warning("⚠️ Échec de l'envoi Telegram")
 
                 if use_ai and GROQ_AVAILABLE:
                     st.markdown("### 🤖 Analyse du combiné")
@@ -2245,7 +2572,7 @@ def show_combines(atp_data):
 
 
 # ─────────────────────────────────────────────────────────────
-# HISTORIQUE
+# HISTORIQUE (AVEC ENVOI TELEGRAM)
 # ─────────────────────────────────────────────────────────────
 def show_history():
     st.markdown("<h2>📜 Historique</h2>", unsafe_allow_html=True)
@@ -2498,7 +2825,7 @@ def show_statistics():
 
 
 # ─────────────────────────────────────────────────────────────
-# CONFIGURATION
+# CONFIGURATION (AVEC SECTION TELEGRAM)
 # ─────────────────────────────────────────────────────────────
 def show_configuration():
     st.markdown("<h2>⚙️ Configuration</h2>", unsafe_allow_html=True)
@@ -2526,6 +2853,53 @@ def show_configuration():
             st.markdown("**Modèle ML:** ⚠️ Non entraîné")
 
         ai_temperature = st.slider("Température IA", 0.0, 1.0, 0.3, 0.1)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("### 📱 Configuration Telegram")
+
+    token, chat_id = get_telegram_config()
+    
+    if token and chat_id:
+        st.success("✅ Telegram configuré et prêt à l'emploi !")
+        
+        col_t1, col_t2, col_t3 = st.columns(3)
+        with col_t1:
+            if st.button("📊 Tester envoi stats", use_container_width=True):
+                if send_stats_to_telegram():
+                    st.success("Stats envoyées !")
+                else:
+                    st.error("Échec de l'envoi")
+        with col_t2:
+            if st.button("🔧 Tester connexion", use_container_width=True):
+                success, msg = test_telegram_connection()
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+        with col_t3:
+            if st.button("📋 Copier aide", use_container_width=True):
+                st.info("""
+                Pour configurer Telegram, modifie les variables au début du fichier :
+                TELEGRAM_BOT_TOKEN = "ton_token"
+                TELEGRAM_CHAT_ID = "ton_chat_id"
+                """)
+    else:
+        st.warning("⚠️ Telegram non configuré")
+        st.markdown("""
+        **Comment configurer Telegram :**
+        1. Va sur Telegram et cherche `@BotFather`
+        2. Envoie `/newbot` et suis les instructions
+        3. Récupère le token donné par BotFather
+        4. Cherche `@userinfobot` et obtiens ton Chat ID
+        5. Modifie les variables au début du fichier :
+        
+        ```python
+        TELEGRAM_BOT_TOKEN = "ton_token_ici"
+        TELEGRAM_CHAT_ID = "ton_chat_id_ici"
+        ```
+        
+        Pour un groupe, mets le tiret devant l'ID : `-123456789`
+        """)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown("### 🗑️ Gestion des données")
@@ -2591,6 +2965,7 @@ def show_configuration():
         ("🎯 Détection value bets", 80, COLORS['primary']),
         ("🔮 Prédictions matchs", 75 if st.session_state.get('ml_model') else 55, COLORS['primary']),
         ("💰 ROI réel (avec marge bookmaker)", 60, COLORS['warning']),
+        ("📱 Intégration Telegram", 95, COLORS['success'] if get_telegram_config()[0] else COLORS['warning']),
     ]
 
     for label, pct, color in components:
