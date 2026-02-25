@@ -38,18 +38,16 @@
   ],
   "results": {
     "atp_Hard": {
-      "accuracy": 0.6190743446350098,
-      "auc": 0.6463700532913208,
-      "status": "trained",
-      "n_train": 113910,
-      "n_test": 28478
+      "accuracy": 0.6210597157478333,
+      "auc": 0.6764920949935913,
+      "last_finetuned": "2026-02-25",
+      "samples": 7452
     },
     "atp_Clay": {
-      "accuracy": 0.6039285063743591,
-      "auc": 0.6185868978500366,
-      "status": "trained",
-      "n_train": 93064,
-      "n_test": 23266
+      "accuracy": 0.6064981818199158,
+      "auc": 0.6363499760627747,
+      "last_finetuned": "2026-02-25",
+      "samples": 2768
     },
     "atp_Grass": {
       "accuracy": 0.6240255236625671,
@@ -61,12 +59,13 @@
   },
   "last_update": "2026-02-25",
   "start_year": 2007,
-  "total_matches_used": 140881,
+  "total_matches_used": 10220,
   "params": {
     "n_form": 5,
     "n_stats": 15,
     "n_h2h": 20,
     "fatigue_days": 7,
     "split": "chronological 80/20"
-  }
+  },
+  "finetune_months": 6
 }
