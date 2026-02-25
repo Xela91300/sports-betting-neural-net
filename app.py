@@ -672,6 +672,16 @@ def get_player_stats(df, player, surface=None, n_stats=15, n_form=5, fatigue_day
         as_w[[c for c in shared_cols if c in as_w.columns]],
         as_l[[c for c in shared_cols if c in as_l.columns]]
     ], ignore_index=True).sort_values("tourney_date", ascending=False)
+
+    # Forcer la conversion numérique sur toutes les colonnes stats
+    # (certains CSV contiennent des strings "NA", "" au lieu de NaN)
+    numeric_cols = ["ace","df_c","svpt","1stIn","1stWon","2ndWon","bpS","bpF",
+                    "o1stIn","o1stWon","o2ndWon","rank","rank_pts","age",
+                    "sets_w","sets_l","games_w_1","games_l_1",
+                    "games_w_2","games_l_2","games_w_3","games_l_3"]
+    for col in numeric_cols:
+        if col in all_m.columns:
+            all_m[col] = pd.to_numeric(all_m[col], errors="coerce")
     if all_m.empty:
         return None
 
@@ -1962,24 +1972,76 @@ with tab_multi:
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Cotes manuelles par match ─────────────────────────
+        # ── Cotes par match (manuel + API) ────────────────────
         with st.expander(f"📊 Cotes Match {mi+1} (optionnel)", expanded=False):
+
+            # ── Bouton API live ──────────────────────────────
+            api_col, status_col = st.columns([2, 3])
+            with api_col:
+                api_btn_disabled = not (j1_i and j2_i)
+                if st.button(
+                    "🔍 Charger cotes live (API)",
+                    key=f"mm_api_btn_{mi}",
+                    disabled=api_btn_disabled,
+                    help="Nécessite que les deux joueurs soient sélectionnés"
+                ):
+                    with st.spinner("Recherche des cotes..."):
+                        live_mm = get_live_odds(j1_i, j2_i)
+                    st.session_state[f"mm_live_{mi}"] = live_mm
+                    st.session_state[f"mm_live_players_{mi}"] = (j1_i, j2_i)
+
+            # Récupérer cache API pour ce match
+            live_data_mm   = st.session_state.get(f"mm_live_{mi}", {})
+            live_players_mm = st.session_state.get(f"mm_live_players_{mi}", (None, None))
+            api_matched    = live_data_mm.get("found") and live_players_mm == (j1_i, j2_i)
+
+            with status_col:
+                if api_matched:
+                    st.markdown(f"""
+                    <div style="font-size:0.72rem; color:#3dd68c; padding-top:8px;">
+                        ✅ Cotes live chargées · {live_data_mm.get("n_books",0)} bookmakers
+                        — auto-remplies ci-dessous
+                    </div>
+                    """, unsafe_allow_html=True)
+                elif live_data_mm.get("source") == "error":
+                    st.markdown(f'<div style="font-size:0.72rem; color:#e07878; padding-top:8px;">⚠️ API indisponible — saisis manuellement</div>', unsafe_allow_html=True)
+                elif live_data_mm.get("found") == False and live_data_mm.get("source") == "live":
+                    st.markdown('<div style="font-size:0.72rem; color:#f5c842; padding-top:8px;">Match non trouvé — saisis manuellement</div>', unsafe_allow_html=True)
+
+            st.markdown('<div style="border-top:1px solid #1a2a2c; margin:10px 0;"></div>', unsafe_allow_html=True)
+
+            # Pré-remplir depuis API si disponible
+            api_j1 = str(live_data_mm.get("odds_j1", "")) if api_matched else ""
+            api_j2 = str(live_data_mm.get("odds_j2", "")) if api_matched else ""
+
+            # ── Saisie 4 colonnes ────────────────────────────
             cotes_col1, cotes_col2, cotes_col3, cotes_col4 = st.columns(4)
             with cotes_col1:
                 st.markdown('<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Vainqueur</div>', unsafe_allow_html=True)
-                c_j1 = st.text_input(f"Cote {j1_i or 'J1'}", key=f"mm_cj1_{mi}", placeholder="ex: 1.75")
-                c_j2 = st.text_input(f"Cote {j2_i or 'J2'}", key=f"mm_cj2_{mi}", placeholder="ex: 2.10")
+                c_j1 = st.text_input(
+                    f"Cote {j1_i or 'J1'}", key=f"mm_cj1_{mi}",
+                    placeholder="ex: 1.75", value=api_j1
+                )
+                c_j2 = st.text_input(
+                    f"Cote {j2_i or 'J2'}", key=f"mm_cj2_{mi}",
+                    placeholder="ex: 2.10", value=api_j2
+                )
+                if api_matched and api_j1 and api_j2:
+                    impl1 = round(1/float(api_j1)*100, 1) if float(api_j1)>1 else 0
+                    impl2 = round(1/float(api_j2)*100, 1) if float(api_j2)>1 else 0
+                    vig   = round(impl1 + impl2 - 100, 1)
+                    st.markdown(f'<div style="font-size:0.65rem; color:#4a5e60;">Impl: {impl1}% / {impl2}% · Marge: {vig}%</div>', unsafe_allow_html=True)
             with cotes_col2:
                 st.markdown('<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">1er Set</div>', unsafe_allow_html=True)
                 c_fs1 = st.text_input(f"1er set {j1_i or 'J1'}", key=f"mm_cfs1_{mi}", placeholder="ex: 1.65")
                 c_fs2 = st.text_input(f"1er set {j2_i or 'J2'}", key=f"mm_cfs2_{mi}", placeholder="ex: 2.20")
             with cotes_col3:
                 st.markdown('<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Total Jeux</div>', unsafe_allow_html=True)
-                c_line = st.text_input("Ligne", key=f"mm_cline_{mi}", placeholder="ex: 22.5")
-                c_over = st.text_input("Over", key=f"mm_cover_{mi}", placeholder="ex: 1.90")
+                c_line  = st.text_input("Ligne", key=f"mm_cline_{mi}", placeholder="ex: 22.5")
+                c_over  = st.text_input("Over",  key=f"mm_cover_{mi}", placeholder="ex: 1.90")
                 c_under = st.text_input("Under", key=f"mm_cunder_{mi}", placeholder="ex: 1.90")
             with cotes_col4:
-                st.markdown(f'<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Handicap Sets</div>', unsafe_allow_html=True)
+                st.markdown('<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Handicap Sets</div>', unsafe_allow_html=True)
                 c_hfav = st.text_input("Fav -1.5s", key=f"mm_chfav_{mi}", placeholder="ex: 1.80")
                 c_hdog = st.text_input("Dog +1.5s", key=f"mm_chdog_{mi}", placeholder="ex: 2.00")
 
