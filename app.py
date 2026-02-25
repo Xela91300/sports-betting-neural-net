@@ -922,11 +922,11 @@ def create_stat_row(key, value, value_color=COLORS["white"]):
     """
 
 # ─────────────────────────────────────────────────────────────
-# CHARGEMENT DES DONNÉES ATP UNIQUEMENT
+# CHARGEMENT DES DONNÉES ATP UNIQUEMENT (SANS AFFICHAGE)
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_atp_data():
-    """Charge uniquement les données ATP"""
+    """Charge uniquement les données ATP sans afficher les logs"""
     if not DATA_DIR.exists():
         return None
     
@@ -943,9 +943,10 @@ def load_atp_data():
             
         try:
             # Essayer différents délimiteurs et encodages
+            df = None
             for encoding in ['utf-8', 'latin-1', 'cp1252']:
                 try:
-                    # Essayer d'abord avec la détection automatique
+                    # Essayer avec la détection automatique
                     df = pd.read_csv(f, encoding=encoding, on_bad_lines='skip', low_memory=False)
                     break
                 except:
@@ -956,23 +957,17 @@ def load_atp_data():
                     except:
                         continue
             
-            # Vérifier si le fichier a les colonnes nécessaires
-            if 'winner_name' in df.columns and 'loser_name' in df.columns:
+            if df is not None and 'winner_name' in df.columns and 'loser_name' in df.columns:
                 atp_dfs.append(df)
-                st.success(f"✅ Chargé: {f.name} ({len(df)} matchs)")
-            else:
-                st.warning(f"⚠️ Format non reconnu: {f.name}")
                 
-        except Exception as e:
-            st.warning(f"⚠️ Erreur lors du chargement de {f.name}")
+        except Exception:
+            # Ignorer silencieusement les erreurs
             continue
     
     if atp_dfs:
         atp_data = pd.concat(atp_dfs, ignore_index=True)
-        st.success(f"✅ Total: {len(atp_data)} matchs ATP chargés")
         return atp_data
     else:
-        st.error("❌ Aucune donnée ATP valide trouvée")
         return None
 
 # ─────────────────────────────────────────────────────────────
@@ -1176,8 +1171,8 @@ def main():
     <div class="divider"></div>
     """, unsafe_allow_html=True)
     
-    # Chargement des données ATP uniquement
-    with st.spinner("Chargement des données ATP..."):
+    # Chargement des données ATP uniquement (sans affichage)
+    with st.spinner("Chargement des données..."):
         atp_data = load_atp_data()
     
     # Sidebar - Navigation
@@ -1206,6 +1201,8 @@ def main():
         
         if atp_data is not None:
             st.markdown(create_badge(f"ATP: {len(atp_data):,} matchs", "primary"), unsafe_allow_html=True)
+        else:
+            st.markdown(create_badge("ATP: 0 matchs", "danger"), unsafe_allow_html=True)
         
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         
@@ -1351,7 +1348,6 @@ def show_predictions(atp_data):
                     else:
                         tournament = None
                         surface = "Hard"
-                        st.warning("Colonne 'tourney_name' non trouvée")
                     
                     # Afficher la surface
                     if surface in SURFACE_CONFIG:
