@@ -832,6 +832,64 @@ def confidence_score(proba, s1, s2, h2h):
     return round(min(sum(v for _,v in signals), 100)), signals
 
 # ─────────────────────────────────────────────────────────────
+# HISTORIQUE DES PRÉDICTIONS
+# ─────────────────────────────────────────────────────────────
+import json as _json_hist
+from datetime import datetime, timedelta
+
+HIST_FILE = ROOT_DIR / "predictions_history.json"
+
+def load_history():
+    """Charge l'historique et purge les entrées > 30 jours."""
+    if not HIST_FILE.exists():
+        return []
+    try:
+        with open(HIST_FILE, "r", encoding="utf-8") as f:
+            data = _json_hist.load(f)
+        cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+        data = [d for d in data if d.get("date","") >= cutoff]
+        return data
+    except Exception:
+        return []
+
+def save_prediction(j1, j2, surface, level, tournament, proba, conf,
+                    odds_j1=None, odds_j2=None, result=None):
+    """Sauvegarde une prédiction dans l'historique."""
+    history = load_history()
+    entry = {
+        "date":       datetime.now().isoformat(),
+        "j1":         j1,
+        "j2":         j2,
+        "surface":    surface,
+        "level":      str(level),
+        "tournament": tournament,
+        "proba_j1":   round(proba, 4),
+        "proba_j2":   round(1 - proba, 4),
+        "favori":     j1 if proba >= 0.5 else j2,
+        "confidence": conf,
+        "odds_j1":    odds_j1,
+        "odds_j2":    odds_j2,
+        "result":     result,  # "j1", "j2", ou None si pas encore joué
+    }
+    history.append(entry)
+    try:
+        with open(HIST_FILE, "w", encoding="utf-8") as f:
+            _json_hist.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass  # Pas de crash si le fichier est en lecture seule
+
+def update_result(idx, result):
+    """Met à jour le résultat d'une prédiction."""
+    history = load_history()
+    if 0 <= idx < len(history):
+        history[idx]["result"] = result
+        try:
+            with open(HIST_FILE, "w", encoding="utf-8") as f:
+                _json_hist.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+# ─────────────────────────────────────────────────────────────
 # ANALYSE CLAUDE AI
 # ─────────────────────────────────────────────────────────────
 def build_ai_prompt(j1, j2, s1, s2, h2h, surface, level, proba, tour):
@@ -928,12 +986,24 @@ ODDS_API_KEY = "8090906fec7338245114345194fde760"
 ODDS_CACHE   = {}  # {cache_key: (timestamp, data)}
 ODDS_TTL     = 6 * 3600  # 6 heures
 
+def _odds_api_get(url):
+    """Requête HTTP robuste : essaie requests puis urllib."""
+    try:
+        import requests as _req
+        r = _req.get(url, headers={"User-Agent": "TennisIQ/1.0"}, timeout=8)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        import urllib.request, json as _json
+        req = urllib.request.Request(url, headers={"User-Agent": "TennisIQ/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return _json.loads(r.read())
+
 def get_live_odds(j1, j2):
     """Cherche les cotes live sur The Odds API pour un match ATP."""
-    import urllib.request, json as _json, time
+    import time
     cache_key = f"{j1.lower()}_{j2.lower()}"
     now = time.time()
-    # Cache 6h
     if cache_key in ODDS_CACHE:
         ts, data = ODDS_CACHE[cache_key]
         if now - ts < ODDS_TTL:
@@ -943,9 +1013,7 @@ def get_live_odds(j1, j2):
             f"https://api.the-odds-api.com/v4/sports/tennis_atp/odds/"
             f"?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal"
         )
-        req = urllib.request.Request(url, headers={"User-Agent": "TennisIQ/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            events = _json.loads(r.read())
+        events = _odds_api_get(url)
         j1_low = j1.lower().split()
         j2_low = j2.lower().split()
         for ev in events:
@@ -1054,7 +1122,7 @@ def calc_handicap_sets(proba_match, best_of):
 
 def get_live_odds_markets(j1, j2):
     """Récupère les cotes pour marchés alternatifs via Odds API."""
-    import urllib.request, json as _json, time
+    import time
     cache_key = f"mkt_{j1.lower()}_{j2.lower()}"
     now = time.time()
     if cache_key in ODDS_CACHE:
@@ -1062,15 +1130,12 @@ def get_live_odds_markets(j1, j2):
         if now - ts < ODDS_TTL:
             return data
     try:
-        # Marchés h2h + set_winner + totals
         url = (
             f"https://api.the-odds-api.com/v4/sports/tennis_atp/odds/"
             f"?apiKey={ODDS_API_KEY}&regions=eu"
             f"&markets=h2h,alternate_spreads,totals&oddsFormat=decimal"
         )
-        req = urllib.request.Request(url, headers={"User-Agent": "TennisIQ/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            events = _json.loads(r.read())
+        events = _odds_api_get(url)
         j1_low = j1.lower().split(); j2_low = j2.lower().split()
         for ev in events:
             home = ev.get("home_team","").lower()
@@ -1292,11 +1357,12 @@ if not atp_ok and not wta_ok:
 # ─────────────────────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────────────────────
-tab_pred, tab_multi, tab_explore, tab_models = st.tabs([
+tab_pred, tab_multi, tab_explore, tab_models, tab_hist = st.tabs([
     "⚡  PREDICT",
     "📋  MULTI-MATCH",
     "🔍  EXPLORE",
-    "📊  MODELS"
+    "📊  MODELS",
+    "📜  HISTORIQUE",
 ])
 
 # ══════════════════════════════════════════════════════════════
@@ -1847,6 +1913,14 @@ with tab_pred:
                             if vb:
                                 c = "#3dd68c" if vb["is_value"] else "#e07878"
                                 st.markdown(f'<div style="font-size:0.75rem; color:{c}; margin-top:4px; text-align:center;">{"✅ VALUE" if vb["is_value"] else "❌"} · cote {odd_v} · {vb["edge"]*100:+.1f}%</div>', unsafe_allow_html=True)
+
+                # ── Sauvegarde historique ─────────────────────
+                _tourn_name = selected_tournoi if "selected_tournoi" in dir() else "—"
+                save_prediction(
+                    joueur1, joueur2, surface, level, _tourn_name,
+                    proba, conf,
+                    odds_j1=odds_j1_val, odds_j2=odds_j2_val
+                )
 
                 # ── Feature vector debug ──────────────────────
                 with st.expander("Feature vector details"):
@@ -2489,6 +2563,179 @@ with tab_models:
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════
+# TAB — HISTORIQUE
+# ══════════════════════════════════════════════════════════════
+with tab_hist:
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <div class="card-title" style="margin-bottom:6px;">📜 Historique des Prédictions</div>
+        <div style="font-size:0.82rem; color:#4a5e60;">
+            Sauvegardées automatiquement · Effacement automatique après 30 jours
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    history = load_history()
+
+    # ── Actions ──────────────────────────────────────────────
+    ha1, ha2, ha3 = st.columns([2, 2, 3])
+    with ha1:
+        if st.button("🗑️ Effacer tout l'historique", key="hist_clear"):
+            try:
+                if HIST_FILE.exists():
+                    HIST_FILE.unlink()
+                st.success("Historique effacé.")
+                history = []
+            except Exception as e:
+                st.error(f"Erreur : {e}")
+    with ha2:
+        surf_filter_h = st.selectbox(
+            "Filtrer surface", ["Toutes","Hard","Clay","Grass"], key="hist_surf"
+        )
+    with ha3:
+        result_filter_h = st.selectbox(
+            "Filtrer résultat", ["Tous","✅ Correct","❌ Incorrect","⏳ En attente"],
+            key="hist_result"
+        )
+
+    if not history:
+        st.markdown("""
+        <div class="card" style="text-align:center; padding:40px; border-color:#1a2a2c;">
+            <div style="font-size:2rem; margin-bottom:12px;">📭</div>
+            <div style="color:#4a5e60; font-size:0.85rem; letter-spacing:2px; text-transform:uppercase;">
+                Aucune prédiction enregistrée
+            </div>
+            <div style="color:#2a3e40; font-size:0.75rem; margin-top:8px;">
+                Lance une prédiction dans l'onglet PREDICT pour commencer
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Appliquer filtres
+        filtered = history.copy()
+        if surf_filter_h != "Toutes":
+            filtered = [h for h in filtered if h.get("surface") == surf_filter_h]
+        if result_filter_h == "✅ Correct":
+            filtered = [h for h in filtered if h.get("result") == h.get("favori")]
+        elif result_filter_h == "❌ Incorrect":
+            filtered = [h for h in filtered if h.get("result") and h.get("result") != h.get("favori")]
+        elif result_filter_h == "⏳ En attente":
+            filtered = [h for h in filtered if not h.get("result")]
+
+        # ── Stats globales ────────────────────────────────
+        total_h   = len(history)
+        played_h  = [h for h in history if h.get("result")]
+        correct_h = [h for h in played_h if h.get("result") == h.get("favori")]
+        acc_h     = len(correct_h) / len(played_h) if played_h else None
+
+        sm1, sm2, sm3, sm4 = st.columns(4)
+        sm1.metric("Total prédictions", total_h)
+        sm2.metric("Jouées", len(played_h))
+        sm3.metric("Correctes", len(correct_h))
+        sm4.metric("Précision réelle",
+                   f"{acc_h:.1%}" if acc_h is not None else "—",
+                   help="Calculée sur les matchs où tu as renseigné le résultat")
+
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:12px;">{len(filtered)} prédiction(s) affichée(s)</div>', unsafe_allow_html=True)
+
+        # ── Liste des prédictions (plus récentes en premier) ──
+        for i, h in enumerate(reversed(filtered)):
+            real_idx = len(history) - 1 - history.index(h) if h in history else i
+            result_h   = h.get("result")
+            favori_h   = h.get("favori","—")
+            is_correct = result_h == favori_h
+            is_pending = not result_h
+
+            date_str = h.get("date","")[:16].replace("T"," ")
+            p1 = h.get("j1","—"); p2 = h.get("j2","—")
+            proba_h = h.get("proba_j1", 0.5)
+            conf_h  = h.get("confidence", 0)
+            surf_h  = h.get("surface","—")
+            tourn_h = h.get("tournament","—")
+            odds_h1 = h.get("odds_j1")
+            odds_h2 = h.get("odds_j2")
+
+            # Couleur statut
+            if is_pending:
+                status_color = "#4a5e60"; status_icon = "⏳"; status_txt = "En attente"
+            elif is_correct:
+                status_color = "#3dd68c"; status_icon = "✅"; status_txt = "Correct"
+            else:
+                status_color = "#e07878"; status_icon = "❌"; status_txt = "Incorrect"
+
+            conf_color_h = "#3dd68c" if conf_h>=70 else "#f5c842" if conf_h>=45 else "#e07878"
+
+            # Badge surface
+            surf_cls = {"Hard":"badge-hard","Clay":"badge-clay","Grass":"badge-grass"}.get(surf_h,"badge-hard")
+
+            with st.container():
+                st.markdown(f"""
+                <div class="card" style="margin-bottom:8px; border-color:{status_color}22; padding:16px 20px;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+
+                        <div style="flex:3; min-width:200px;">
+                            <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">
+                                {date_str} · {tourn_h}
+                            </div>
+                            <div style="font-family:'Playfair Display',serif; font-size:1rem; font-weight:700; color:#e8e0d0; margin-bottom:4px;">
+                                {p1} <span style="color:#3dd68c; margin:0 8px; font-size:0.85rem;">vs</span> {p2}
+                            </div>
+                            <div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+                                <span class="badge {surf_cls}" style="font-size:0.62rem;">{surf_h}</span>
+                                <span style="font-size:0.72rem; color:#4a5e60;">Favori : <span style="color:#c8c0b0;">{favori_h}</span></span>
+                            </div>
+                        </div>
+
+                        <div style="flex:1; text-align:center; min-width:80px;">
+                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">PROBA</div>
+                            <div style="font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:#e8e0d0;">{proba_h:.0%}</div>
+                            <div style="font-size:0.65rem; color:#4a5e60;">{p1}</div>
+                        </div>
+
+                        <div style="flex:1; text-align:center; min-width:80px;">
+                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">CONF.</div>
+                            <div style="font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:{conf_color_h};">{conf_h}</div>
+                        </div>
+
+                        {"<div style='flex:1; text-align:center; min-width:80px;'><div style='font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;'>COTES</div><div style='font-size:0.82rem; color:#c8c0b0;'>" + str(odds_h1) + " / " + str(odds_h2) + "</div></div>" if odds_h1 else ""}
+
+                        <div style="flex:1; text-align:center; min-width:80px;">
+                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">RÉSULTAT</div>
+                            <div style="font-size:1rem; font-weight:700; color:{status_color};">{status_icon} {status_txt}</div>
+                        </div>
+
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── Renseigner le résultat si en attente ─────
+                if is_pending:
+                    rc1, rc2, rc3 = st.columns([2, 2, 3])
+                    with rc1:
+                        if st.button(f"✅ {p1} a gagné", key=f"hist_res_j1_{i}"):
+                            update_result(len(history)-1-i, p1)
+                            st.rerun()
+                    with rc2:
+                        if st.button(f"✅ {p2} a gagné", key=f"hist_res_j2_{i}"):
+                            update_result(len(history)-1-i, p2)
+                            st.rerun()
+
+        # ── Export CSV ────────────────────────────────────
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        if st.button("⬇️ Exporter l'historique en CSV", key="hist_export"):
+            df_hist = pd.DataFrame(history)
+            csv_data = df_hist.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Télécharger CSV",
+                data=csv_data,
+                file_name=f"tennisiq_historique_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="hist_dl"
+            )
 
 # ─────────────────────────────────────────────────────────────
 # FOOTER
