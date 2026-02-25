@@ -1962,6 +1962,27 @@ with tab_multi:
         </div>
         """, unsafe_allow_html=True)
 
+        # ── Cotes manuelles par match ─────────────────────────
+        with st.expander(f"📊 Cotes Match {mi+1} (optionnel)", expanded=False):
+            cotes_col1, cotes_col2, cotes_col3, cotes_col4 = st.columns(4)
+            with cotes_col1:
+                st.markdown('<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Vainqueur</div>', unsafe_allow_html=True)
+                c_j1 = st.text_input(f"Cote {j1_i or 'J1'}", key=f"mm_cj1_{mi}", placeholder="ex: 1.75")
+                c_j2 = st.text_input(f"Cote {j2_i or 'J2'}", key=f"mm_cj2_{mi}", placeholder="ex: 2.10")
+            with cotes_col2:
+                st.markdown('<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">1er Set</div>', unsafe_allow_html=True)
+                c_fs1 = st.text_input(f"1er set {j1_i or 'J1'}", key=f"mm_cfs1_{mi}", placeholder="ex: 1.65")
+                c_fs2 = st.text_input(f"1er set {j2_i or 'J2'}", key=f"mm_cfs2_{mi}", placeholder="ex: 2.20")
+            with cotes_col3:
+                st.markdown('<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Total Jeux</div>', unsafe_allow_html=True)
+                c_line = st.text_input("Ligne", key=f"mm_cline_{mi}", placeholder="ex: 22.5")
+                c_over = st.text_input("Over", key=f"mm_cover_{mi}", placeholder="ex: 1.90")
+                c_under = st.text_input("Under", key=f"mm_cunder_{mi}", placeholder="ex: 1.90")
+            with cotes_col4:
+                st.markdown(f'<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">Handicap Sets</div>', unsafe_allow_html=True)
+                c_hfav = st.text_input("Fav -1.5s", key=f"mm_chfav_{mi}", placeholder="ex: 1.80")
+                c_hdog = st.text_input("Dog +1.5s", key=f"mm_chdog_{mi}", placeholder="ex: 2.00")
+
         matchs_config.append((j1_i, j2_i, tourn_i, surf_i, level_i, bo_i))
 
         if mi < int(n_matchs) - 1:
@@ -2107,6 +2128,107 @@ with tab_multi:
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
+
+                        # ── Cotes & Value Bet multi-match ────────
+                        def _po(s):
+                            try: return float(str(s).replace(",",".").strip()) if s and str(s).strip() else None
+                            except: return None
+
+                        cj1  = _po(st.session_state.get(f"mm_cj1_{idx_m}"))
+                        cj2  = _po(st.session_state.get(f"mm_cj2_{idx_m}"))
+                        cfs1 = _po(st.session_state.get(f"mm_cfs1_{idx_m}"))
+                        cfs2 = _po(st.session_state.get(f"mm_cfs2_{idx_m}"))
+                        cline= _po(st.session_state.get(f"mm_cline_{idx_m}"))
+                        cover= _po(st.session_state.get(f"mm_cover_{idx_m}"))
+                        cund = _po(st.session_state.get(f"mm_cunder_{idx_m}"))
+                        chfav= _po(st.session_state.get(f"mm_chfav_{idx_m}"))
+                        chdog= _po(st.session_state.get(f"mm_chdog_{idx_m}"))
+
+                        has_odds = any([cj1, cj2, cfs1, cfs2, cover, cund, chfav, chdog])
+
+                        if has_odds:
+                            # Calculs marchés alternatifs
+                            p_fs_mm  = calc_first_set_winner(s1_mm, s2_mm, proba_mm)
+                            total_mm = calc_total_games(s1_mm, s2_mm, mm_best_of, mm_surface)
+                            fav_mm_name = j1 if proba_mm >= 0.5 else j2
+                            dog_mm_name = j2 if proba_mm >= 0.5 else j1
+                            proba_fav_mm = proba_mm if proba_mm >= 0.5 else 1 - proba_mm
+                            p_hcp_mm = calc_handicap_sets(proba_fav_mm, mm_best_of)
+                            cline_val = cline or total_mm
+                            p_over_mm  = max(0.05, min(0.95, 0.5 + (total_mm - cline_val) * 0.06))
+                            p_under_mm = 1 - p_over_mm
+                            hcp_lbl_mm = "-1.5 sets" if mm_best_of == 3 else "-2.5 sets"
+
+                            vb_rows = []
+                            # Vainqueur
+                            for p_v, odd_v, lbl in [(proba_mm, cj1, f"Vainqueur {j1}"),
+                                                     (1-proba_mm, cj2, f"Vainqueur {j2}")]:
+                                if odd_v:
+                                    vb = value_bet_analysis(p_v, odd_v)
+                                    if vb: vb_rows.append((lbl, odd_v, p_v, vb))
+                            # 1er set
+                            for p_v, odd_v, lbl in [(p_fs_mm, cfs1, f"1er set {j1}"),
+                                                     (1-p_fs_mm, cfs2, f"1er set {j2}")]:
+                                if odd_v:
+                                    vb = value_bet_analysis(p_v, odd_v)
+                                    if vb: vb_rows.append((lbl, odd_v, p_v, vb))
+                            # Total jeux
+                            for p_v, odd_v, lbl in [(p_over_mm, cover, f"Over {cline_val}"),
+                                                     (p_under_mm, cund, f"Under {cline_val}")]:
+                                if odd_v:
+                                    vb = value_bet_analysis(p_v, odd_v)
+                                    if vb: vb_rows.append((lbl, odd_v, p_v, vb))
+                            # Handicap
+                            for p_v, odd_v, lbl in [(p_hcp_mm, chfav, f"{fav_mm_name} {hcp_lbl_mm}"),
+                                                     (1-p_hcp_mm, chdog, f"{dog_mm_name} +{hcp_lbl_mm[1:]}")]:
+                                if odd_v:
+                                    vb = value_bet_analysis(p_v, odd_v)
+                                    if vb: vb_rows.append((lbl, odd_v, p_v, vb))
+
+                            if vb_rows:
+                                st.markdown("""
+                                <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px;
+                                            text-transform:uppercase; margin:10px 0 6px 0;">📈 Value Bet</div>
+                                """, unsafe_allow_html=True)
+
+                                # Afficher en grille compacte 2 colonnes
+                                vb_chunks = [vb_rows[i:i+2] for i in range(0, len(vb_rows), 2)]
+                                for chunk in vb_chunks:
+                                    vb_cols = st.columns(len(chunk))
+                                    for col_vb, (lbl, odd_v, p_v, vb) in zip(vb_cols, chunk):
+                                        with col_vb:
+                                            ec = "#3dd68c" if vb["is_value"] else "#e07878"
+                                            icon = "✅" if vb["is_value"] else "❌"
+                                            impl_pct = vb["implied"] * 100
+                                            edge_pct = vb["edge"] * 100
+                                            st.markdown(f"""
+                                            <div style="background:#111a1c; border:1px solid {ec}33;
+                                                        border-radius:10px; padding:10px 14px; margin-bottom:6px;">
+                                                <div style="font-size:0.68rem; color:#4a5e60;
+                                                            margin-bottom:4px; text-transform:uppercase;
+                                                            letter-spacing:1px;">{lbl}</div>
+                                                <div style="display:flex; justify-content:space-between;
+                                                            align-items:center;">
+                                                    <div>
+                                                        <span style="font-size:1.1rem; font-weight:700;
+                                                                     color:#e8e0d0; font-family:'Playfair Display',serif;">
+                                                            {odd_v}
+                                                        </span>
+                                                        <span style="font-size:0.7rem; color:#4a5e60; margin-left:4px;">
+                                                            cote
+                                                        </span>
+                                                    </div>
+                                                    <div style="text-align:right;">
+                                                        <div style="font-size:0.82rem; font-weight:700; color:{ec};">
+                                                            {icon} {edge_pct:+.1f}%
+                                                        </div>
+                                                        <div style="font-size:0.65rem; color:#4a5e60;">
+                                                            Modèle {p_v:.0%} · BK {impl_pct:.0f}%
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            """, unsafe_allow_html=True)
 
                         # Analyse Claude AI
                         if mm_ai and GROQ_AVAILABLE:
