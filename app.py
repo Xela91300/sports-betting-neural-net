@@ -2384,6 +2384,15 @@ with tab_multi:
                                     </div>
                                     """, unsafe_allow_html=True)
 
+                        # ── Sauvegarde historique multi-match ────
+                        _cj1_mm = _po(st.session_state.get(f"mm_cj1_{idx_m}"))
+                        _cj2_mm = _po(st.session_state.get(f"mm_cj2_{idx_m}"))
+                        save_prediction(
+                            j1, j2, mm_surface, mm_level, tourn_mm,
+                            proba_mm, conf_mm,
+                            odds_j1=_cj1_mm, odds_j2=_cj2_mm
+                        )
+
                         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
