@@ -1089,7 +1089,7 @@ def calculate_confidence(proba, stats1, stats2, h2h):
     return min(100, confidence)
 
 # ─────────────────────────────────────────────────────────────
-# GESTION DE L'HISTORIQUE
+# GESTION DE L'HISTORIQUE (AMÉLIORÉE)
 # ─────────────────────────────────────────────────────────────
 def load_history():
     """Charge l'historique des prédictions"""
@@ -1102,12 +1102,15 @@ def load_history():
         return []
 
 def save_prediction(pred_data):
-    """Sauvegarde une prédiction"""
+    """Sauvegarde une prédiction avec statut initial 'en_attente'"""
     history = load_history()
     
     # Ajouter la date si non présente
     if 'date' not in pred_data:
         pred_data['date'] = datetime.now().isoformat()
+    
+    # Ajouter le statut
+    pred_data['statut'] = 'en_attente'  # en_attente, joueur1_gagne, joueur2_gagne, abandon, annule
     
     # Ajouter un ID unique
     pred_data['id'] = hashlib.md5(f"{pred_data['date']}{pred_data.get('player1', '')}{pred_data.get('player2', '')}".encode()).hexdigest()[:8]
@@ -1117,6 +1120,49 @@ def save_prediction(pred_data):
     # Limiter à 1000 entrées
     if len(history) > 1000:
         history = history[-1000:]
+    
+    try:
+        with open(HIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+        return True
+    except:
+        return False
+
+def update_prediction_status(pred_id, statut):
+    """Met à jour le statut d'une prédiction"""
+    history = load_history()
+    
+    for pred in history:
+        if pred.get('id') == pred_id:
+            old_statut = pred.get('statut', 'en_attente')
+            pred['statut'] = statut
+            
+            # Mettre à jour les statistiques
+            stats = load_user_stats()
+            
+            # Si la prédiction était en attente et devient terminée
+            if old_statut == 'en_attente' and statut in ['joueur1_gagne', 'joueur2_gagne']:
+                stats['total_predictions'] = stats.get('total_predictions', 0) + 1
+                
+                # Vérifier si la prédiction était correcte
+                favori = pred.get('favori_modele', pred.get('player1'))  # Par défaut player1 est favori
+                if (statut == 'joueur1_gagne' and favori == pred.get('player1')) or \
+                   (statut == 'joueur2_gagne' and favori == pred.get('player2')):
+                    stats['correct_predictions'] = stats.get('correct_predictions', 0) + 1
+                    stats['current_streak'] = stats.get('current_streak', 0) + 1
+                    stats['best_streak'] = max(stats.get('best_streak', 0), stats['current_streak'])
+                else:
+                    stats['current_streak'] = 0
+            
+            stats['last_updated'] = datetime.now().isoformat()
+            
+            try:
+                with open(USER_STATS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(stats, f, indent=2)
+            except:
+                pass
+            
+            break
     
     try:
         with open(HIST_FILE, 'w', encoding='utf-8') as f:
@@ -1142,6 +1188,9 @@ def save_combine(combine_data):
     # Ajouter la date
     combine_data['date'] = datetime.now().isoformat()
     
+    # Ajouter le statut
+    combine_data['statut'] = 'en_attente'
+    
     # Ajouter un ID unique
     combine_data['id'] = hashlib.md5(f"{combine_data['date']}{len(combines)}".encode()).hexdigest()[:8]
     
@@ -1150,6 +1199,40 @@ def save_combine(combine_data):
     # Limiter à 200 combinés
     if len(combines) > 200:
         combines = combines[-200:]
+    
+    try:
+        with open(COMB_HIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(combines, f, indent=2, ensure_ascii=False)
+        return True
+    except:
+        return False
+
+def update_combine_status(combine_id, statut):
+    """Met à jour le statut d'un combiné"""
+    combines = load_combines()
+    
+    for comb in combines:
+        if comb.get('id') == combine_id:
+            old_statut = comb.get('statut', 'en_attente')
+            comb['statut'] = statut
+            
+            # Mettre à jour les statistiques
+            if old_statut == 'en_attente' and statut in ['gagne', 'perdu']:
+                stats = load_user_stats()
+                stats['total_combines'] = stats.get('total_combines', 0) + 1
+                if statut == 'gagne':
+                    stats['won_combines'] = stats.get('won_combines', 0) + 1
+                    stats['total_won'] = stats.get('total_won', 0) + comb.get('gain_potentiel', 0)
+                stats['total_invested'] = stats.get('total_invested', 0) + comb.get('mise', 0)
+                stats['last_updated'] = datetime.now().isoformat()
+                
+                try:
+                    with open(USER_STATS_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(stats, f, indent=2)
+                except:
+                    pass
+            
+            break
     
     try:
         with open(COMB_HIST_FILE, 'w', encoding='utf-8') as f:
@@ -1261,7 +1344,7 @@ def show_dashboard(atp_data):
     st.markdown("<h2>🏠 Tableau de Bord</h2>", unsafe_allow_html=True)
     
     # Statistiques rapides
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown(create_metric("Matchs ATP", format_number(len(atp_data) if atp_data is not None else 0), ""), unsafe_allow_html=True)
@@ -1275,6 +1358,10 @@ def show_dashboard(atp_data):
         accuracy = (stats.get('correct_predictions', 0) / stats.get('total_predictions', 1)) * 100 if stats.get('total_predictions', 0) > 0 else 0
         st.markdown(create_metric("Précision", f"{accuracy:.1f}", "%", COLORS['success'] if accuracy >= 60 else COLORS['warning']), unsafe_allow_html=True)
     
+    with col4:
+        streak = stats.get('current_streak', 0)
+        st.markdown(create_metric("Série en cours", f"{streak}", "", COLORS['success'] if streak > 0 else COLORS['gray']), unsafe_allow_html=True)
+    
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
     # Graphiques simples avec st.bar_chart
@@ -1285,52 +1372,62 @@ def show_dashboard(atp_data):
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # Dernières prédictions
-    st.markdown("<h3>📋 Dernières prédictions</h3>", unsafe_allow_html=True)
+    # Dernières prédictions en attente
+    st.markdown("<h3>⏳ Prédictions en attente</h3>", unsafe_allow_html=True)
     
     history = load_history()
-    if history:
-        df_history = pd.DataFrame(history[-10:])
-        if 'date' in df_history.columns:
-            df_history['date'] = pd.to_datetime(df_history['date']).dt.strftime('%d/%m/%Y %H:%M')
-        df_history['match'] = df_history.get('player1', '') + " vs " + df_history.get('player2', '')
-        if 'proba' in df_history.columns:
-            df_history['proba'] = df_history['proba'].apply(lambda x: f"{x:.1%}" if isinstance(x, (int, float)) else x)
-        if 'confidence' in df_history.columns:
-            df_history['confiance'] = df_history['confidence'].apply(lambda x: f"{x}/100" if isinstance(x, (int, float)) else x)
-        
-        display_cols = []
-        if 'date' in df_history.columns:
-            display_cols.append('date')
-        if 'match' in df_history.columns:
-            display_cols.append('match')
-        if 'proba' in df_history.columns:
-            display_cols.append('proba')
-        if 'confiance' in df_history.columns:
-            display_cols.append('confiance')
-        if 'surface' in df_history.columns:
-            display_cols.append('surface')
-        
-        if display_cols:
-            st.dataframe(
-                df_history[display_cols].rename(columns={
-                    'date': 'Date',
-                    'match': 'Match',
-                    'proba': 'Probabilité',
-                    'confiance': 'Confiance',
-                    'surface': 'Surface'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
+    pending = [h for h in history if h.get('statut') == 'en_attente']
+    
+    if pending:
+        for pred in pending[-5:]:  # 5 dernières
+            with st.container():
+                col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 2])
+                
+                with col1:
+                    st.markdown(f"**{pred.get('player1', '?')}** vs **{pred.get('player2', '?')}**")
+                    st.caption(pred.get('date', '')[:10])
+                
+                with col2:
+                    st.markdown(f"Tournoi: {pred.get('tournament', '?')}")
+                    st.markdown(f"Surface: {pred.get('surface', '?')}")
+                
+                with col3:
+                    proba = pred.get('proba', 0.5)
+                    st.markdown(f"**Probas**")
+                    st.markdown(f"{pred.get('player1', '?')}: {proba:.1%}")
+                    st.markdown(f"{pred.get('player2', '?')}: {1-proba:.1%}")
+                
+                with col4:
+                    favori = pred.get('favori_modele', pred.get('player1'))
+                    st.markdown(f"**Favori**")
+                    st.markdown(f"🏆 {favori}")
+                
+                with col5:
+                    if st.button(f"✅ {pred.get('player1', '?')} gagne", key=f"dash_win1_{pred.get('id', '')}"):
+                        update_prediction_status(pred.get('id', ''), 'joueur1_gagne')
+                        st.rerun()
+                    if st.button(f"✅ {pred.get('player2', '?')} gagne", key=f"dash_win2_{pred.get('id', '')}"):
+                        update_prediction_status(pred.get('id', ''), 'joueur2_gagne')
+                        st.rerun()
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        if st.button(f"🚫 Abandon", key=f"dash_aband_{pred.get('id', '')}"):
+                            update_prediction_status(pred.get('id', ''), 'abandon')
+                            st.rerun()
+                    with col_b:
+                        if st.button(f"❌ Annulé", key=f"dash_annul_{pred.get('id', '')}"):
+                            update_prediction_status(pred.get('id', ''), 'annule')
+                            st.rerun()
+                
+                st.markdown("---")
     else:
-        st.info("Aucune prédiction pour le moment. Commence par en faire une !")
+        st.info("Aucune prédiction en attente")
 
 # ─────────────────────────────────────────────────────────────
-# PRÉDICTIONS (CORRIGÉ AVEC STRIP)
+# PRÉDICTIONS (AVEC RECOMMANDATIONS)
 # ─────────────────────────────────────────────────────────────
 def show_predictions(atp_data):
-    """Affiche l'interface de prédiction simple"""
+    """Affiche l'interface de prédiction simple avec recommandations"""
     
     st.markdown("<h2>🎯 Prédiction Simple</h2>", unsafe_allow_html=True)
     
@@ -1373,6 +1470,11 @@ def show_predictions(atp_data):
                             if not surface_df.empty:
                                 surface = surface_df.iloc[0]
                     
+                    # Option pour les cotes
+                    with st.expander("📊 Cotes bookmaker (optionnel)"):
+                        odds1 = st.text_input(f"Cote {player1}", key="pred_odds1", placeholder="1.75")
+                        odds2 = st.text_input(f"Cote {player2}", key="pred_odds2", placeholder="2.10")
+                    
                     # Afficher la surface
                     if surface in SURFACE_CONFIG:
                         st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", surface.lower()), unsafe_allow_html=True)
@@ -1392,23 +1494,68 @@ def show_predictions(atp_data):
             proba = calculate_probability(stats1, stats2, h2h, surface)
             confidence = calculate_confidence(proba, stats1, stats2, h2h)
             
+            # Calcul des edges si cotes fournies
+            best_value = None
+            if odds1 and odds2:
+                try:
+                    o1 = float(odds1.replace(',', '.'))
+                    o2 = float(odds2.replace(',', '.'))
+                    proba_impl1 = 1/o1
+                    proba_impl2 = 1/o2
+                    edge1 = proba - proba_impl1
+                    edge2 = (1 - proba) - proba_impl2
+                    
+                    if edge1 > edge2 and edge1 > MIN_EDGE_COMBINE:
+                        best_value = {
+                            'joueur': player1_clean,
+                            'edge': edge1,
+                            'cote': o1,
+                            'proba': proba
+                        }
+                    elif edge2 > edge1 and edge2 > MIN_EDGE_COMBINE:
+                        best_value = {
+                            'joueur': player2_clean,
+                            'edge': edge2,
+                            'cote': o2,
+                            'proba': 1 - proba
+                        }
+                except:
+                    pass
+            
+            # Favori du modèle
+            favori_modele = player1_clean if proba >= 0.5 else player2_clean
+            
             # Affichage des résultats
             st.markdown("<h3 style='text-align: center;'>Résultat</h3>", unsafe_allow_html=True)
             
             # Barre de progression avec noms nettoyés
             st.markdown(f"""
-            <div style="text-align: center; margin: 2rem 0;">
-                <div style="font-size: 1.2rem; color: #6C7A89; margin-bottom: 1rem;">{player1_clean}</div>
-                <div style="font-size: 3rem; font-weight: 800; color: {COLORS['primary']};">{proba:.1%}</div>
+            <div style="text-align: center; margin: 1rem 0;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span>{player1_clean}</span>
+                    <span>{player2_clean}</span>
+                </div>
                 {create_progress_bar(proba)}
-                <div style="font-size: 1.2rem; color: #6C7A89; margin-top: 1rem;">{player2_clean}</div>
-                <div style="font-size: 1rem; color: {COLORS['gray']};">{(1-proba):.1%}</div>
+                <div style="display: flex; justify-content: space-between; margin-top: 0.5rem;">
+                    <span style="color: {COLORS['primary']};">{proba:.1%}</span>
+                    <span style="color: {COLORS['gray']};">{(1-proba):.1%}</span>
+                </div>
             </div>
             """, unsafe_allow_html=True)
             
-            # Confiance
-            conf_color = COLORS['success'] if confidence >= 70 else COLORS['warning'] if confidence >= 50 else COLORS['danger']
-            st.markdown(create_metric("Confiance", f"{confidence:.0f}", "/100", conf_color), unsafe_allow_html=True)
+            # Favori et confiance
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown(create_metric("Favori du modèle", favori_modele, "", COLORS['primary']), unsafe_allow_html=True)
+            with col_b:
+                conf_color = COLORS['success'] if confidence >= 70 else COLORS['warning'] if confidence >= 50 else COLORS['danger']
+                st.markdown(create_metric("Confiance", f"{confidence:.0f}", "/100", conf_color), unsafe_allow_html=True)
+            
+            # Value bet
+            if best_value:
+                st.success(f"✅ **Value bet détecté!** Parier sur **{best_value['joueur']}** à {best_value['cote']:.2f} (edge: {best_value['edge']*100:+.1f}%)")
+            elif odds1 and odds2:
+                st.warning("⚠️ Aucun value bet significatif détecté")
             
             # Bouton de sauvegarde
             if st.button("💾 Sauvegarder la prédiction", use_container_width=True):
@@ -1419,19 +1566,19 @@ def show_predictions(atp_data):
                     'surface': surface,
                     'proba': proba,
                     'confidence': confidence,
-                    'circuit': "ATP"
+                    'circuit': "ATP",
+                    'odds1': odds1 if odds1 else None,
+                    'odds2': odds2 if odds2 else None,
+                    'favori_modele': favori_modele,
+                    'best_value': best_value
                 }
                 if save_prediction(pred_data):
-                    st.success("Prédiction sauvegardée !")
+                    st.success("✅ Prédiction sauvegardée dans l'historique !")
                 else:
                     st.error("Erreur lors de la sauvegarde")
     
     if player1 and player2 and 'df' in locals():
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        
-        # Nettoyer les noms pour l'affichage des stats
-        player1_clean = player1.strip()
-        player2_clean = player2.strip()
         
         # Détails des statistiques
         col1, col2, col3 = st.columns(3)
@@ -1462,10 +1609,10 @@ def show_predictions(atp_data):
                 st.info("Aucun face-à-face")
 
 # ─────────────────────────────────────────────────────────────
-# MULTI-MATCHS (MODIFIÉ AVEC MAX 30)
+# MULTI-MATCHS (AVEC RECOMMANDATIONS)
 # ─────────────────────────────────────────────────────────────
 def show_multimatches(atp_data):
-    """Affiche l'interface multi-matchs avec max 30 matchs"""
+    """Affiche l'interface multi-matchs avec max 30 matchs et recommandations de paris"""
     
     st.markdown("<h2>📊 Multi-matchs</h2>", unsafe_allow_html=True)
     
@@ -1485,7 +1632,7 @@ def show_multimatches(atp_data):
         use_ai = st.checkbox("Activer l'analyse IA", value=True)
     
     with col3:
-        show_details = st.checkbox("Afficher les détails", value=False)
+        auto_save = st.checkbox("Sauvegarde auto", value=True, help="Sauvegarder automatiquement les prédictions")
     
     df = atp_data
     
@@ -1563,6 +1710,53 @@ def show_multimatches(atp_data):
                         proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
                         confidence = calculate_confidence(proba, match['stats1'], match['stats2'], match['h2h'])
                         
+                        # Calcul des probabilités implicites des cotes
+                        proba_impl1 = 1/float(match['odds1'].replace(',', '.')) if match['odds1'] else None
+                        proba_impl2 = 1/float(match['odds2'].replace(',', '.')) if match['odds2'] else None
+                        
+                        # Calcul des edges
+                        edge1 = proba - proba_impl1 if proba_impl1 else None
+                        edge2 = (1 - proba) - proba_impl2 if proba_impl2 else None
+                        
+                        # Déterminer le meilleur value bet
+                        best_value = None
+                        if edge1 is not None and edge2 is not None:
+                            if edge1 > edge2 and edge1 > MIN_EDGE_COMBINE:
+                                best_value = {
+                                    'joueur': match['player1'],
+                                    'edge': edge1,
+                                    'cote': float(match['odds1'].replace(',', '.')),
+                                    'proba': proba
+                                }
+                            elif edge2 > edge1 and edge2 > MIN_EDGE_COMBINE:
+                                best_value = {
+                                    'joueur': match['player2'],
+                                    'edge': edge2,
+                                    'cote': float(match['odds2'].replace(',', '.')),
+                                    'proba': 1 - proba
+                                }
+                        
+                        # Favori du modèle
+                        favori_modele = match['player1'] if proba >= 0.5 else match['player2']
+                        
+                        # Sauvegarde automatique si activée
+                        if auto_save:
+                            pred_data = {
+                                'player1': match['player1'],
+                                'player2': match['player2'],
+                                'tournament': match['tournament'],
+                                'surface': match['surface'],
+                                'proba': proba,
+                                'confidence': confidence,
+                                'circuit': "ATP",
+                                'odds1': match['odds1'],
+                                'odds2': match['odds2'],
+                                'favori_modele': favori_modele,
+                                'best_value': best_value,
+                                'source': 'multi_match'
+                            }
+                            save_prediction(pred_data)
+                        
                         results.append({
                             'match': i+1,
                             'player1': match['player1'],
@@ -1572,7 +1766,14 @@ def show_multimatches(atp_data):
                             'proba': proba,
                             'confidence': confidence,
                             'odds1': match['odds1'],
-                            'odds2': match['odds2']
+                            'odds2': match['odds2'],
+                            'proba_impl1': proba_impl1,
+                            'proba_impl2': proba_impl2,
+                            'edge1': edge1,
+                            'edge2': edge2,
+                            'best_value': best_value,
+                            'favori_modele': favori_modele,
+                            'proba_favori': proba if proba >= 0.5 else 1 - proba
                         })
                     
                     progress_bar.progress((i + 1) / n_matches)
@@ -1581,35 +1782,107 @@ def show_multimatches(atp_data):
                 progress_bar.empty()
                 
                 if results:
-                    # Tableau des résultats
-                    df_results = pd.DataFrame(results)
-                    if 'proba' in df_results.columns:
-                        df_results['proba'] = df_results['proba'].apply(lambda x: f"{x:.1%}")
-                    if 'confidence' in df_results.columns:
-                        df_results['confidence'] = df_results['confidence'].apply(lambda x: f"{x:.0f}/100")
+                    # Tableau des résultats avec recommandations
+                    st.markdown("## 📊 Résultats de l'analyse")
                     
-                    st.markdown(f"**Résultats de l'analyse ({len(results)} matchs)**")
-                    st.dataframe(
-                        df_results[['match', 'player1', 'player2', 'tournament', 'surface', 'proba', 'confidence']].rename(columns={
-                            'match': '#',
-                            'player1': 'Joueur 1',
-                            'player2': 'Joueur 2',
-                            'tournament': 'Tournoi',
-                            'surface': 'Surface',
-                            'proba': 'Probabilité',
-                            'confidence': 'Confiance'
-                        }),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    for result in results:
+                        with st.container():
+                            # En-tête du match
+                            st.markdown(f"### Match {result['match']}: {result['player1']} vs {result['player2']}")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.markdown(create_metric("Tournoi", result['tournament']), unsafe_allow_html=True)
+                            
+                            with col2:
+                                st.markdown(create_metric("Surface", result['surface']), unsafe_allow_html=True)
+                            
+                            with col3:
+                                st.markdown(create_metric("Confiance", f"{result['confidence']:.0f}", "/100"), unsafe_allow_html=True)
+                            
+                            with col4:
+                                if result['best_value']:
+                                    st.markdown(create_metric("Value Bet", "✅ OUI", "", COLORS['success']), unsafe_allow_html=True)
+                                else:
+                                    st.markdown(create_metric("Value Bet", "❌ NON", "", COLORS['danger']), unsafe_allow_html=True)
+                            
+                            # Deuxième ligne : probabilités
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.markdown(f"**{result['player1']}**")
+                                st.markdown(f"Modèle: {result['proba']:.1%}")
+                                if result['odds1']:
+                                    st.markdown(f"Cote: {result['odds1']}")
+                                    if result['proba_impl1']:
+                                        st.markdown(f"BK: {result['proba_impl1']:.1%}")
+                            
+                            with col2:
+                                st.markdown(f"**{result['player2']}**")
+                                st.markdown(f"Modèle: {1-result['proba']:.1%}")
+                                if result['odds2']:
+                                    st.markdown(f"Cote: {result['odds2']}")
+                                    if result['proba_impl2']:
+                                        st.markdown(f"BK: {result['proba_impl2']:.1%}")
+                            
+                            with col3:
+                                st.markdown("**Favori du modèle**")
+                                st.markdown(f"🏆 {result['favori_modele']}")
+                                st.markdown(f"Probas: {result['proba_favori']:.1%}")
+                            
+                            with col4:
+                                if result['best_value']:
+                                    st.markdown("**🎯 Meilleur Value Bet**")
+                                    st.markdown(f"💰 {result['best_value']['joueur']}")
+                                    st.markdown(f"Edge: {result['best_value']['edge']*100:+.1f}%")
+                                    st.markdown(f"Cote: {result['best_value']['cote']:.2f}")
+                                else:
+                                    st.markdown("**⚠️ Pas de value bet**")
+                                    st.markdown("Aucun edge significatif")
+                            
+                            # Barre de probabilité
+                            st.markdown(f"""
+                            <div style="margin: 1rem 0;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                    <span>{result['player1']}</span>
+                                    <span>{result['player2']}</span>
+                                </div>
+                                {create_progress_bar(result['proba'])}
+                                <div style="display: flex; justify-content: space-between; margin-top: 0.5rem;">
+                                    <span style="color: {COLORS['primary']};">{result['proba']:.1%}</span>
+                                    <span style="color: {COLORS['gray']};">{(1-result['proba']):.1%}</span>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Valeurs des edges
+                            if result['edge1'] is not None and result['edge2'] is not None:
+                                col1, col2 = st.columns(2)
+                                edge1_color = COLORS['success'] if result['edge1'] > MIN_EDGE_COMBINE else COLORS['danger']
+                                edge2_color = COLORS['success'] if result['edge2'] > MIN_EDGE_COMBINE else COLORS['danger']
+                                
+                                with col1:
+                                    st.markdown(f"**Edge {result['player1']}:** <span style='color: {edge1_color};'>{result['edge1']*100:+.1f}%</span>", unsafe_allow_html=True)
+                                
+                                with col2:
+                                    st.markdown(f"**Edge {result['player2']}:** <span style='color: {edge2_color};'>{result['edge2']*100:+.1f}%</span>", unsafe_allow_html=True)
+                            
+                            # Recommandation
+                            if result['best_value']:
+                                st.success(f"✅ **Recommandation:** Parier sur **{result['best_value']['joueur']}** avec une cote de {result['best_value']['cote']:.2f} (edge positif de {result['best_value']['edge']*100:+.1f}%)")
+                            elif result['odds1'] and result['odds2']:
+                                st.warning(f"⚠️ **Recommandation:** Aucun value bet détecté - évite de parier sur ce match")
+                            
+                            st.markdown("---")
                     
                     # Analyses IA si activé
-                    if use_ai and GROQ_AVAILABLE and show_details:
+                    if use_ai and GROQ_AVAILABLE:
                         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
                         st.markdown("<h3>🤖 Analyses IA</h3>", unsafe_allow_html=True)
                         
                         for result in results:
-                            prompt = f"Analyse le match de tennis entre {result['player1']} et {result['player2']} sur surface {result['surface']}. La probabilité de victoire de {result['player1']} est de {result['proba']}. Donne une analyse concise en 3 points."
+                            prompt = f"Analyse le match de tennis entre {result['player1']} et {result['player2']} sur surface {result['surface']}. La probabilité de victoire de {result['player1']} est de {result['proba']:.1%}. {'Un value bet a été détecté sur ' + result['best_value']['joueur'] if result['best_value'] else 'Aucun value bet significatif'}. Donne une analyse concise en 3 points."
                             
                             with st.spinner(f"Analyse du match {result['match']}..."):
                                 analysis = call_groq_api(prompt)
@@ -1619,7 +1892,7 @@ def show_multimatches(atp_data):
                                     st.markdown(analysis)
 
 # ─────────────────────────────────────────────────────────────
-# COMBINÉS (MODIFIÉ POUR 30 MATCHS MAX)
+# COMBINÉS
 # ─────────────────────────────────────────────────────────────
 def show_combines(atp_data):
     """Affiche l'interface des combinés avec max 30 sélections"""
@@ -1742,7 +2015,8 @@ def show_combines(atp_data):
                                             'proba': proba,
                                             'cote': odds1,
                                             'edge': edge1,
-                                            'surface': match['surface']
+                                            'surface': match['surface'],
+                                            'favori_modele': match['player1']
                                         })
                                     elif edge2 > MIN_EDGE_COMBINE and (1 - proba) >= MIN_PROBA_COMBINE:
                                         selections.append({
@@ -1751,7 +2025,8 @@ def show_combines(atp_data):
                                             'proba': 1 - proba,
                                             'cote': odds2,
                                             'edge': edge2,
-                                            'surface': match['surface']
+                                            'surface': match['surface'],
+                                            'favori_modele': match['player2']
                                         })
                                 else:
                                     # Mode manuel - proposer les deux options
@@ -1765,7 +2040,8 @@ def show_combines(atp_data):
                                         'cote2': odds2,
                                         'edge1': edge1,
                                         'edge2': edge2,
-                                        'surface': match['surface']
+                                        'surface': match['surface'],
+                                        'favori_modele': match['player1'] if proba >= 0.5 else match['player2']
                                     })
                             except:
                                 invalid_matches += 1
@@ -1839,7 +2115,8 @@ def show_combines(atp_data):
                             'gain_potentiel': gain,
                             'esperance': esperance,
                             'kelly': kelly,
-                            'nb_matches': len(selected)
+                            'nb_matches': len(selected),
+                            'statut': 'en_attente'
                         }
                         
                         if save_combine(combine_data):
@@ -1879,10 +2156,10 @@ def show_combines(atp_data):
                     st.info("Mode manuel en développement - utilise le mode auto-sélection pour l'instant")
 
 # ─────────────────────────────────────────────────────────────
-# HISTORIQUE
+# HISTORIQUE (AVEC BOUTONS DE RÉSULTAT)
 # ─────────────────────────────────────────────────────────────
 def show_history():
-    """Affiche l'historique des prédictions et combinés"""
+    """Affiche l'historique des prédictions et combinés avec boutons de résultat"""
     
     st.markdown("<h2>📜 Historique</h2>", unsafe_allow_html=True)
     
@@ -1893,30 +2170,77 @@ def show_history():
         
         if history:
             # Filtres
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 filter_surface = st.selectbox("Surface", ["Toutes"] + SURFACES)
             
             with col2:
+                filter_statut = st.selectbox("Statut", ["Tous", "en_attente", "joueur1_gagne", "joueur2_gagne", "abandon", "annule"])
+            
+            with col3:
                 search = st.text_input("Rechercher un joueur", placeholder="Nom...")
+            
+            with col4:
+                show_all = st.checkbox("Afficher tout", value=False)
             
             # Appliquer les filtres
             filtered = history
             if filter_surface != "Toutes":
                 filtered = [h for h in filtered if h.get('surface') == filter_surface]
+            if filter_statut != "Tous":
+                filtered = [h for h in filtered if h.get('statut') == filter_statut]
             if search:
                 filtered = [h for h in filtered if search.lower() in h.get('player1', '').lower() or search.lower() in h.get('player2', '').lower()]
             
             # Inverser pour avoir les plus récents en premier
             filtered.reverse()
             
+            # Limiter l'affichage si nécessaire
+            if not show_all and len(filtered) > 20:
+                filtered = filtered[:20]
+                st.caption(f"Affichage des 20 plus récentes sur {len(filtered)}")
+            
             # Afficher
-            for i, pred in enumerate(filtered):
+            for pred in filtered:
                 date_str = pred.get('date', 'Date inconnue')[:16]
                 player1 = pred.get('player1', 'Inconnu')
                 player2 = pred.get('player2', 'Inconnu')
-                with st.expander(f"{date_str} - {player1} vs {player2}", expanded=i==0):
+                statut = pred.get('statut', 'en_attente')
+                
+                # Couleur selon le statut
+                if statut == 'en_attente':
+                    status_color = COLORS['warning']
+                    status_text = "⏳ En attente"
+                elif statut == 'joueur1_gagne':
+                    status_color = COLORS['success']
+                    status_text = f"✅ {player1} a gagné"
+                elif statut == 'joueur2_gagne':
+                    status_color = COLORS['success']
+                    status_text = f"✅ {player2} a gagné"
+                elif statut == 'abandon':
+                    status_color = COLORS['danger']
+                    status_text = "🚫 Abandon"
+                else:  # annule
+                    status_color = COLORS['gray']
+                    status_text = "❌ Annulé"
+                
+                with st.container():
+                    st.markdown(f"""
+                    <div style="background: rgba(255,255,255,0.02); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; border-left: 4px solid {status_color};">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="color: {COLORS['gray']}; font-size: 0.8rem;">{date_str}</span>
+                                <h4 style="margin: 0.5rem 0;">{player1} vs {player2}</h4>
+                            </div>
+                            <div>
+                                <span style="background: {status_color}20; color: {status_color}; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem;">
+                                    {status_text}
+                                </span>
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
@@ -1926,14 +2250,58 @@ def show_history():
                         st.markdown(create_metric("Surface", pred.get('surface', '—')), unsafe_allow_html=True)
                     
                     with col3:
-                        proba = pred.get('proba', 0)
-                        st.markdown(create_metric("Probabilité", f"{proba:.1%}" if isinstance(proba, (int, float)) else str(proba)), unsafe_allow_html=True)
+                        proba = pred.get('proba', 0.5)
+                        favori = pred.get('favori_modele', player1 if proba >= 0.5 else player2)
+                        st.markdown(create_metric("Favori", favori, "", COLORS['primary']), unsafe_allow_html=True)
                     
                     with col4:
                         confidence = pred.get('confidence', 0)
                         if isinstance(confidence, (int, float)):
                             conf_color = COLORS['success'] if confidence >= 70 else COLORS['warning'] if confidence >= 50 else COLORS['danger']
                             st.markdown(create_metric("Confiance", f"{confidence:.0f}", "/100", conf_color), unsafe_allow_html=True)
+                    
+                    # Barre de probabilité
+                    st.markdown(f"""
+                    <div style="margin: 1rem 0;">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>{player1}: {proba:.1%}</span>
+                            <span>{player2}: {1-proba:.1%}</span>
+                        </div>
+                        {create_progress_bar(proba)}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Value bet si présent
+                    best_value = pred.get('best_value')
+                    if best_value:
+                        st.success(f"🎯 Value bet détecté: {best_value['joueur']} (edge: {best_value['edge']*100:+.1f}%)")
+                    
+                    # Boutons pour les prédictions en attente
+                    if statut == 'en_attente':
+                        st.markdown("**Mettre à jour le résultat:**")
+                        col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+                        
+                        with col_b1:
+                            if st.button(f"✅ {player1} gagne", key=f"hist_win1_{pred.get('id', '')}"):
+                                update_prediction_status(pred.get('id', ''), 'joueur1_gagne')
+                                st.rerun()
+                        
+                        with col_b2:
+                            if st.button(f"✅ {player2} gagne", key=f"hist_win2_{pred.get('id', '')}"):
+                                update_prediction_status(pred.get('id', ''), 'joueur2_gagne')
+                                st.rerun()
+                        
+                        with col_b3:
+                            if st.button(f"🚫 Abandon", key=f"hist_aband_{pred.get('id', '')}"):
+                                update_prediction_status(pred.get('id', ''), 'abandon')
+                                st.rerun()
+                        
+                        with col_b4:
+                            if st.button(f"❌ Annulé", key=f"hist_annul_{pred.get('id', '')}"):
+                                update_prediction_status(pred.get('id', ''), 'annule')
+                                st.rerun()
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info("Aucune prédiction dans l'historique")
     
@@ -1942,7 +2310,7 @@ def show_history():
         
         if combines:
             # Pagination
-            items_per_page = 10
+            items_per_page = 5
             total_pages = (len(combines) + items_per_page - 1) // items_per_page
             
             col1, col2, col3 = st.columns([1, 2, 1])
@@ -1957,11 +2325,25 @@ def show_history():
                 date_str = comb.get('date', 'Date inconnue')[:16]
                 nb_matches = comb.get('nb_matches', 0)
                 proba = comb.get('proba_globale', 0)
+                statut = comb.get('statut', 'en_attente')
                 
-                with st.expander(f"🎯 {date_str} - {nb_matches} matchs - Proba {proba:.1%}", expanded=i==start_idx):
+                # Couleur selon le statut
+                if statut == 'en_attente':
+                    status_color = COLORS['warning']
+                    status_text = "⏳ En attente"
+                elif statut == 'gagne':
+                    status_color = COLORS['success']
+                    status_text = "✅ Gagné"
+                else:  # perdu
+                    status_color = COLORS['danger']
+                    status_text = "❌ Perdu"
+                
+                with st.expander(f"🎯 {date_str} - {nb_matches} matchs - Proba {proba:.1%} - {status_text}", expanded=i==start_idx):
                     cote = comb.get('cote_globale', 0)
                     esperance = comb.get('esperance', 0)
                     kelly = comb.get('kelly', 0)
+                    mise = comb.get('mise', 0)
+                    gain = comb.get('gain_potentiel', 0)
                     
                     col1, col2, col3, col4 = st.columns(4)
                     
@@ -1979,9 +2361,16 @@ def show_history():
                     with col4:
                         st.markdown(create_metric("Kelly", f"{kelly*100:.1f}", "%"), unsafe_allow_html=True)
                     
+                    # Informations supplémentaires
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(create_metric("Mise", f"{mise:.2f}", "€"), unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(create_metric("Gain potentiel", f"{gain:.2f}", "€"), unsafe_allow_html=True)
+                    
                     # Détail des sélections
                     if 'selections' in comb and comb['selections']:
-                        st.markdown("**Sélections:**")
+                        st.markdown("**📋 Sélections:**")
                         
                         # Créer un tableau pour les sélections
                         df_sel = pd.DataFrame([{
@@ -1993,6 +2382,21 @@ def show_history():
                         } for sel in comb['selections']])
                         
                         st.dataframe(df_sel, use_container_width=True, hide_index=True)
+                    
+                    # Boutons pour les combinés en attente
+                    if statut == 'en_attente':
+                        st.markdown("**Mettre à jour le résultat:**")
+                        col_b1, col_b2 = st.columns(2)
+                        
+                        with col_b1:
+                            if st.button(f"✅ Combiné gagné", key=f"comb_win_{comb.get('id', '')}"):
+                                update_combine_status(comb.get('id', ''), 'gagne')
+                                st.rerun()
+                        
+                        with col_b2:
+                            if st.button(f"❌ Combiné perdu", key=f"comb_loss_{comb.get('id', '')}"):
+                                update_combine_status(comb.get('id', ''), 'perdu')
+                                st.rerun()
         else:
             st.info("Aucun combiné dans l'historique")
 
@@ -2000,7 +2404,7 @@ def show_history():
 # STATISTIQUES
 # ─────────────────────────────────────────────────────────────
 def show_statistics():
-    """Affiche les statistiques utilisateur"""
+    """Affiche les statistiques utilisateur détaillées"""
     
     st.markdown("<h2>📈 Statistiques</h2>", unsafe_allow_html=True)
     
@@ -2028,7 +2432,35 @@ def show_statistics():
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
+    # Statistiques détaillées
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        streak = stats.get('current_streak', 0)
+        streak_color = COLORS['success'] if streak > 0 else COLORS['gray']
+        st.markdown(create_metric("Série en cours", f"{streak}", "", streak_color), unsafe_allow_html=True)
+    
+    with col2:
+        best_streak = stats.get('best_streak', 0)
+        st.markdown(create_metric("Meilleure série", f"{best_streak}", ""), unsafe_allow_html=True)
+    
+    with col3:
+        total_preds = stats.get('total_predictions', 0)
+        correct = stats.get('correct_predictions', 0)
+        incorrect = total_preds - correct
+        st.markdown(create_metric("Correct/Incorrect", f"{correct}/{incorrect}"), unsafe_allow_html=True)
+    
+    with col4:
+        last_updated = stats.get('last_updated', '')
+        if last_updated:
+            last_updated = last_updated[:10]
+        st.markdown(create_metric("Dernière MAJ", last_updated), unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
     # Statistiques financières
+    st.markdown("<h3>💰 Performance financière</h3>", unsafe_allow_html=True)
+    
     col1, col2, col3, col4 = st.columns(4)
     
     total_invested = stats.get('total_invested', 0)
@@ -2049,6 +2481,19 @@ def show_statistics():
     with col4:
         roi_color = COLORS['success'] if roi >= 0 else COLORS['danger']
         st.markdown(create_metric("ROI", f"{roi:+.1f}", "%", roi_color), unsafe_allow_html=True)
+    
+    # Graphiques simples
+    if history:
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown("<h3>📊 Évolution des prédictions</h3>", unsafe_allow_html=True)
+        
+        # Compter les prédictions par mois
+        df_history = pd.DataFrame(history)
+        if 'date' in df_history.columns:
+            df_history['date'] = pd.to_datetime(df_history['date'])
+            df_history['mois'] = df_history['date'].dt.to_period('M').astype(str)
+            monthly_counts = df_history['mois'].value_counts().sort_index()
+            st.line_chart(monthly_counts)
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -2065,6 +2510,11 @@ def show_configuration():
         
         # Année de début
         start_year = st.number_input("Année de début", min_value=2000, max_value=2024, value=START_YEAR)
+        
+        # Seuils de value bet
+        st.markdown("**Seuils de value bet**")
+        min_edge = st.slider("Edge minimum (%)", 0.0, 10.0, float(MIN_EDGE_COMBINE*100), 0.5) / 100
+        min_proba = st.slider("Probabilité minimum (%)", 50, 90, int(MIN_PROBA_COMBINE*100), 5) / 100
     
     with col2:
         st.markdown("### 🤖 Intelligence Artificielle")
@@ -2075,6 +2525,9 @@ def show_configuration():
         
         if not get_groq_key():
             st.info("Pour activer les analyses IA, ajoute ta clé API Groq dans les secrets Streamlit ou en variable d'environnement.")
+        
+        # Mode IA
+        ai_temperature = st.slider("Température IA", 0.0, 1.0, 0.3, 0.1, help="Plus la température est élevée, plus l'IA est créative")
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
@@ -2097,10 +2550,10 @@ def show_configuration():
                 st.rerun()
     
     with col3:
-        if st.button("🗑️ Effacer toutes les statistiques", use_container_width=True):
+        if st.button("🗑️ Réinitialiser les statistiques", use_container_width=True):
             if USER_STATS_FILE.exists():
                 USER_STATS_FILE.unlink()
-                st.success("Statistiques effacées !")
+                st.success("Statistiques réinitialisées !")
                 st.rerun()
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
