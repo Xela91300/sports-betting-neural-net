@@ -1314,10 +1314,14 @@ def show_predictions(atp_data):
     
     col1, col2 = st.columns(2)
     
+    # Initialisation des variables
+    player1 = None
+    player2 = None
+    tournament = None
+    surface = "Hard"
+    df = atp_data
+    
     with col1:
-        # Données ATP uniquement
-        df = atp_data
-        
         if df is not None and not df.empty:
             # Vérifier les colonnes disponibles
             winner_col = 'winner_name' if 'winner_name' in df.columns else None
@@ -1342,12 +1346,9 @@ def show_predictions(atp_data):
                         
                         # Récupérer la surface
                         if tournament and 'surface' in df.columns:
-                            surface = df[df['tourney_name'] == tournament]['surface'].iloc[0] if tournament in df['tourney_name'].values else "Hard"
-                        else:
-                            surface = "Hard"
-                    else:
-                        tournament = None
-                        surface = "Hard"
+                            surface_df = df[df['tourney_name'] == tournament]['surface']
+                            if not surface_df.empty:
+                                surface = surface_df.iloc[0]
                     
                     # Afficher la surface
                     if surface in SURFACE_CONFIG:
@@ -1367,13 +1368,14 @@ def show_predictions(atp_data):
             # Affichage des résultats
             st.markdown("<h3 style='text-align: center;'>Résultat</h3>", unsafe_allow_html=True)
             
-            # Barre de progression
+            # Barre de progression avec formatage corrigé
             st.markdown(f"""
             <div style="text-align: center; margin: 2rem 0;">
                 <div style="font-size: 1.2rem; color: #6C7A89; margin-bottom: 1rem;">{player1}</div>
                 <div style="font-size: 3rem; font-weight: 800; color: {COLORS['primary']};">{proba:.1%}</div>
                 {create_progress_bar(proba)}
-                <div style="font-size: 1.2rem; color: #6C7A89; margin-top: 1rem;">{player2} {1-proba:.1%}</div>
+                <div style="font-size: 1.2rem; color: #6C7A89; margin-top: 1rem;">{player2}</div>
+                <div style="font-size: 1rem; color: {COLORS['gray']};">{(1-proba):.1%}</div>
             </div>
             """, unsafe_allow_html=True)
             
