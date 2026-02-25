@@ -987,20 +987,153 @@ ODDS_CACHE   = {}  # {cache_key: (timestamp, data)}
 ODDS_TTL     = 6 * 3600  # 6 heures
 
 def _odds_api_get(url):
-    """Requête HTTP robuste : essaie requests puis urllib."""
+    """Requête HTTP robuste avec retry — requests puis urllib."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 TennisIQ/1.0",
+        "Accept": "application/json",
+    }
+    last_err = None
     try:
         import requests as _req
-        r = _req.get(url, headers={"User-Agent": "TennisIQ/1.0"}, timeout=8)
+        r = _req.get(url, headers=headers, timeout=15, verify=True)
         r.raise_for_status()
-        return r.json()
-    except Exception:
-        import urllib.request, json as _json
-        req = urllib.request.Request(url, headers={"User-Agent": "TennisIQ/1.0"})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            return _json.loads(r.read())
+        return r.json(), dict(r.headers)
+    except Exception as e:
+        last_err = e
+    try:
+        import urllib.request, ssl, json as _json
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+            return _json.loads(r.read()), dict(r.headers)
+    except Exception as e:
+        last_err = e
+    raise RuntimeError(f"Connexion impossible : {last_err}")
+
+def _build_odds_index(events):
+    """Construit un index joueur→cotes depuis une liste d'événements."""
+    idx = {}
+    for ev in events:
+        home = ev.get("home_team", "")
+        away = ev.get("away_team", "")
+        odds_home, odds_away = [], []
+        for bk in ev.get("bookmakers", [])[:6]:
+            for mkt in bk.get("markets", []):
+                if mkt["key"] == "h2h":
+                    for out in mkt["outcomes"]:
+                        if out["name"] == home:
+                            odds_home.append(out["price"])
+                        elif out["name"] == away:
+                            odds_away.append(out["price"])
+        if odds_home and odds_away:
+            entry = {
+                "home": home, "away": away,
+                "odds_home": round(sum(odds_home)/len(odds_home), 2),
+                "odds_away": round(sum(odds_away)/len(odds_away), 2),
+                "n_books": len(ev.get("bookmakers", [])),
+                "commence_time": ev.get("commence_time", ""),
+                "sport_key": ev.get("sport_key", ""),
+            }
+            for word in home.lower().split():
+                if len(word) > 2: idx.setdefault(word, []).append(entry)
+            for word in away.lower().split():
+                if len(word) > 2: idx.setdefault(word, []).append(entry)
+    return idx
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_all_atp_odds():
+    """
+    Charge tous les matchs tennis ATP disponibles.
+    Stratégie doc-conforme :
+    1. GET /v4/sports (gratuit) → liste les clés tennis actives
+    2. GET /v4/sports/upcoming/odds (1 crédit) → tous les matchs live+prochains
+    """
+    try:
+        # Étape 1 : récupérer les sports tennis actifs (gratuit, sans quota)
+        sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={ODDS_API_KEY}"
+        sports_data, _ = _odds_api_get(sports_url)
+        tennis_keys = [
+            s["key"] for s in sports_data
+            if "tennis" in s["key"].lower() and s.get("active", False)
+            and "atp" in s["key"].lower()
+        ]
+
+        if not tennis_keys:
+            # Fallback : upcoming couvre tous les sports actifs
+            tennis_keys = ["upcoming"]
+
+        # Étape 2 : charger les cotes pour chaque tournoi ATP actif
+        all_events = []
+        credits_used = 0
+        for sport_key in tennis_keys[:8]:  # max 8 tournois = 8 crédits
+            odds_url = (
+                f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
+                f"?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal"
+            )
+            try:
+                events, hdrs = _odds_api_get(odds_url)
+                all_events.extend(events)
+                credits_used += int(hdrs.get("x-requests-last", 1))
+                remaining = hdrs.get("x-requests-remaining", "?")
+            except Exception:
+                continue
+
+        if not all_events:
+            # Dernier recours : upcoming (retourne matchs de tous sports)
+            odds_url = (
+                f"https://api.the-odds-api.com/v4/sports/upcoming/odds/"
+                f"?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal"
+            )
+            all_events, hdrs = _odds_api_get(odds_url)
+            # Filtrer tennis uniquement
+            all_events = [e for e in all_events if "tennis" in e.get("sport_key","")]
+            remaining = hdrs.get("x-requests-remaining", "?")
+
+        idx = _build_odds_index(all_events)
+        return {
+            "ok": True,
+            "index": idx,
+            "total": len(all_events),
+            "credits_used": credits_used,
+            "credits_remaining": remaining,
+            "sport_keys": tennis_keys,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def search_odds_from_index(idx, j1, j2):
+    """Cherche les cotes de j1 vs j2 dans l'index pré-chargé."""
+    j1_words = [w for w in j1.lower().split() if len(w) > 2]
+    j2_words = [w for w in j2.lower().split() if len(w) > 2]
+    candidates = []
+    for w in j1_words:
+        candidates.extend(idx.get(w, []))
+    seen = set()
+    for ev in candidates:
+        eid = f"{ev['home']}_{ev['away']}"
+        if eid in seen: continue
+        seen.add(eid)
+        home_l = ev["home"].lower()
+        away_l = ev["away"].lower()
+        j1_in_home = any(w in home_l for w in j1_words)
+        j1_in_away = any(w in away_l for w in j1_words)
+        j2_in_home = any(w in home_l for w in j2_words)
+        j2_in_away = any(w in away_l for w in j2_words)
+        if j1_in_home and j2_in_away:
+            return {"found": True, "odds_j1": ev["odds_home"], "odds_j2": ev["odds_away"],
+                    "n_books": ev["n_books"], "source": "live", "sport": ev["sport_key"]}
+        if j1_in_away and j2_in_home:
+            return {"found": True, "odds_j1": ev["odds_away"], "odds_j2": ev["odds_home"],
+                    "n_books": ev["n_books"], "source": "live", "sport": ev["sport_key"]}
+    return {"found": False, "source": "live"}
 
 def get_live_odds(j1, j2):
-    """Cherche les cotes live sur The Odds API pour un match ATP."""
+    """Cherche les cotes via le cache global (1 requête pour tous les matchs)."""
+    # Essayer d'abord l'index global déjà chargé
+    global_data = st.session_state.get("odds_global_index")
+    if global_data and global_data.get("ok"):
+        return search_odds_from_index(global_data["index"], j1, j2)
+    # Sinon fetch direct
     import time
     cache_key = f"{j1.lower()}_{j2.lower()}"
     now = time.time()
@@ -1009,40 +1142,12 @@ def get_live_odds(j1, j2):
         if now - ts < ODDS_TTL:
             return data
     try:
-        url = (
-            f"https://api.the-odds-api.com/v4/sports/tennis_atp/odds/"
-            f"?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal"
-        )
-        events = _odds_api_get(url)
-        j1_low = j1.lower().split()
-        j2_low = j2.lower().split()
-        for ev in events:
-            home = ev.get("home_team","").lower()
-            away = ev.get("away_team","").lower()
-            match1 = any(w in home for w in j1_low) and any(w in away for w in j2_low)
-            match2 = any(w in away for w in j1_low) and any(w in home for w in j2_low)
-            if match1 or match2:
-                odds_j1, odds_j2 = [], []
-                for bk in ev.get("bookmakers", [])[:5]:
-                    for mkt in bk.get("markets", []):
-                        if mkt["key"] == "h2h":
-                            for out in mkt["outcomes"]:
-                                nm = out["name"].lower()
-                                if any(w in nm for w in j1_low):
-                                    odds_j1.append(out["price"])
-                                elif any(w in nm for w in j2_low):
-                                    odds_j2.append(out["price"])
-                if odds_j1 and odds_j2:
-                    result = {
-                        "found": True,
-                        "odds_j1": round(sum(odds_j1)/len(odds_j1), 2),
-                        "odds_j2": round(sum(odds_j2)/len(odds_j2), 2),
-                        "source": "live",
-                        "n_books": len(ev.get("bookmakers",[])),
-                    }
-                    ODDS_CACHE[cache_key] = (now, result)
-                    return result
-        result = {"found": False, "source": "live"}
+        global_result = fetch_all_atp_odds()
+        st.session_state["odds_global_index"] = global_result
+        if global_result.get("ok"):
+            result = search_odds_from_index(global_result["index"], j1, j2)
+        else:
+            result = {"found": False, "source": "error", "error": global_result.get("error","")}
         ODDS_CACHE[cache_key] = (now, result)
         return result
     except Exception as e:
@@ -1357,9 +1462,10 @@ if not atp_ok and not wta_ok:
 # ─────────────────────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────────────────────
-tab_pred, tab_multi, tab_explore, tab_models, tab_hist = st.tabs([
+tab_pred, tab_multi, tab_comb, tab_explore, tab_models, tab_hist = st.tabs([
     "⚡  PREDICT",
     "📋  MULTI-MATCH",
+    "🎰  COMBINÉ",
     "🔍  EXPLORE",
     "📊  MODELS",
     "📜  HISTORIQUE",
@@ -2393,7 +2499,542 @@ with tab_multi:
                             odds_j1=_cj1_mm, odds_j2=_cj2_mm
                         )
 
+                        # Accumuler résultats pour génération combiné
+                        mm_results_acc = st.session_state.get("mm_results_acc", [])
+                        mm_results_acc.append({
+                            "j1": j1, "j2": j2,
+                            "joueur": j1 if proba_mm >= 0.5 else j2,
+                            "proba": proba_mm if proba_mm >= 0.5 else 1 - proba_mm,
+                            "proba_raw": proba_mm,
+                            "conf": conf_mm,
+                            "surface": mm_surface,
+                            "level": mm_level,
+                            "tournoi": tourn_mm,
+                            "best_of": mm_best_of,
+                            "cote": _po(st.session_state.get(f"mm_cj1_{idx_m}")) if proba_mm >= 0.5
+                                    else _po(st.session_state.get(f"mm_cj2_{idx_m}")),
+                        })
+                        st.session_state["mm_results_acc"] = mm_results_acc
+
                         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+                # ══ GÉNÉRATION COMBINÉ depuis multi-match ════
+                mm_res = st.session_state.get("mm_results_acc", [])
+                if mm_res:
+                    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+                    # ── Header ─────────────────────────────────
+                    hdr1, hdr2 = st.columns([4, 1])
+                    with hdr1:
+                        st.markdown(
+                            '<div style="font-family:Playfair Display,serif; font-size:1.2rem;'
+                            ' font-weight:700; color:#e8e0d0; margin-bottom:4px;">🎰 Générer un Combiné Solide</div>'
+                            '<div style="font-size:0.78rem; color:#4a5e60; margin-bottom:12px;">'
+                            + str(len(mm_res)) + " match(s) analysé(s) — l'app sélectionne les plus solides</div>",
+                            unsafe_allow_html=True
+                        )
+                    with hdr2:
+                        if st.button("🗑️ Reset", key="mm_gen_reset"):
+                            st.session_state["mm_results_acc"] = []
+                            st.session_state.pop("mm_gen_result", None)
+                            st.rerun()
+
+                    # ── Paramètres ─────────────────────────────
+                    gcol1, gcol2, gcol3 = st.columns(3)
+                    with gcol1:
+                        min_proba_g = st.slider(
+                            "Proba min / sélection", 0.50, 0.90, 0.62, 0.01,
+                            key="mm_gen_minp", format="%.0f%%",
+                            help="Seuls les matchs avec proba ≥ ce seuil sont retenus"
+                        )
+                    with gcol2:
+                        min_conf_g = st.slider(
+                            "Confidence min", 0, 100, 45, 5,
+                            key="mm_gen_minc",
+                            help="Filtre les prédictions peu fiables"
+                        )
+                    with gcol3:
+                        max_sel_g = st.number_input(
+                            "Max sélections", 2, 15, 6, 1,
+                            key="mm_gen_maxs",
+                            help="Au-delà de 8, la proba globale devient très faible"
+                        )
+
+                    # ── Aperçu temps réel ──────────────────────
+                    eligible_preview = sorted(
+                        [r for r in mm_res if r["proba"] >= min_proba_g and r["conf"] >= min_conf_g],
+                        key=lambda r: r["proba"], reverse=True
+                    )
+                    n_elig = len(eligible_preview)
+                    n_sel  = min(n_elig, int(max_sel_g))
+                    proba_prev = 1.0
+                    for r in eligible_preview[:n_sel]:
+                        proba_prev *= r["proba"]
+
+                    pc = "#3dd68c" if proba_prev >= 0.40 else "#f5c842" if proba_prev >= 0.20 else "#e07878"
+                    st.markdown(
+                        '<div style="background:#0e1517; border-radius:10px; padding:10px 16px;'
+                        ' margin-bottom:12px; display:flex; gap:24px; flex-wrap:wrap;">'
+                        '<div><div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px;">ÉLIGIBLES</div>'
+                        '<div style="font-size:1.2rem; font-weight:700; color:#e8e0d0;">' + str(n_elig) + '</div></div>'
+                        '<div><div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px;">RETENUS</div>'
+                        '<div style="font-size:1.2rem; font-weight:700; color:#e8e0d0;">' + str(n_sel) + '</div></div>'
+                        '<div><div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px;">PROBA ESTIMÉE</div>'
+                        '<div style="font-size:1.2rem; font-weight:700; color:' + pc + ';">'
+                        + (f"{proba_prev:.1%}" if n_sel > 0 else "—") + '</div></div>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # ── Bouton générer ─────────────────────────
+                    if st.button(
+                        "⚡  GÉNÉRER LE COMBINÉ",
+                        key="mm_gen_btn",
+                        disabled=(n_elig == 0),
+                        use_container_width=True
+                    ):
+                        selected_g   = eligible_preview[:int(max_sel_g)]
+                        exclu_g_list = [r for r in mm_res if r not in selected_g]
+                        proba_glob   = 1.0
+                        cote_glob    = 1.0
+                        has_all_odds = True
+                        for r in selected_g:
+                            proba_glob *= r["proba"]
+                            if r.get("cote"):
+                                cote_glob *= float(r["cote"])
+                            else:
+                                has_all_odds = False
+                        esp_g    = round(proba_glob * cote_glob - 1, 4) if has_all_odds else None
+                        kelly_g  = max(0.0, (proba_glob * cote_glob - 1) / (cote_glob - 1)) if has_all_odds and cote_glob > 1 else None
+                        st.session_state["mm_gen_result"] = {
+                            "selected": selected_g, "exclu": exclu_g_list,
+                            "proba_glob": proba_glob, "cote_glob": cote_glob,
+                            "has_all_odds": has_all_odds, "esp": esp_g, "kelly": kelly_g,
+                        }
+
+                    # ── Résultat persistant ────────────────────
+                    gen_res = st.session_state.get("mm_gen_result")
+                    if gen_res:
+                        sel_g   = gen_res["selected"]
+                        excl_g  = gen_res["exclu"]
+                        pg      = gen_res["proba_glob"]
+                        cg      = gen_res["cote_glob"]
+                        hao     = gen_res["has_all_odds"]
+                        esp_g   = gen_res["esp"]
+                        kelly_g = gen_res["kelly"]
+
+                        vc = "#3dd68c" if pg >= 0.40 else "#f5c842" if pg >= 0.22 else "#e07878"
+                        vi = "✅" if pg >= 0.40 else "⚠️" if pg >= 0.22 else "🚫"
+                        vt = "COMBINÉ SOLIDE" if pg >= 0.40 else "COMBINÉ RISQUÉ" if pg >= 0.22 else "TRÈS RISQUÉ"
+
+                        st.markdown(
+                            '<div style="height:8px;"></div>'
+                            '<div style="font-size:0.65rem; color:#4a5e60; letter-spacing:3px;'
+                            ' text-transform:uppercase; margin-bottom:10px;">'
+                            + str(len(sel_g)) + " SÉLECTIONS RETENUES</div>",
+                            unsafe_allow_html=True
+                        )
+
+                        for idx_g, r in enumerate(sel_g):
+                            sc = {"Hard":"#4a90d9","Clay":"#c8703a","Grass":"#3dd68c"}.get(r["surface"],"#4a5e60")
+                            cc = "#3dd68c" if r["conf"]>=70 else "#f5c842" if r["conf"]>=45 else "#e07878"
+                            cd = str(r["cote"]) if r.get("cote") else "—"
+                            tc1, tc2, tc3, tc4, tc5 = st.columns([4, 1, 1, 1, 1])
+                            with tc1:
+                                st.markdown(
+                                    '<div style="padding:6px 0;">'
+                                    '<span style="font-size:0.7rem; color:#4a5e60;">' + str(idx_g+1) + '. </span>'
+                                    '<span style="font-weight:700; color:#e8e0d0;">' + r["joueur"] + '</span>'
+                                    '<span style="font-size:0.7rem; color:#4a5e60; margin-left:6px;">'
+                                    + r["j1"] + " vs " + r["j2"] + '</span></div>',
+                                    unsafe_allow_html=True
+                                )
+                            with tc2:
+                                st.markdown('<div style="text-align:center; padding-top:4px;"><div style="font-size:0.55rem; color:#4a5e60;">SURF.</div><div style="font-size:0.85rem; font-weight:700; color:' + sc + ';">' + r["surface"] + '</div></div>', unsafe_allow_html=True)
+                            with tc3:
+                                st.markdown('<div style="text-align:center; padding-top:4px;"><div style="font-size:0.55rem; color:#4a5e60;">PROBA</div><div style="font-size:1rem; font-weight:800; color:#3dd68c;">' + f"{r['proba']:.0%}" + '</div></div>', unsafe_allow_html=True)
+                            with tc4:
+                                st.markdown('<div style="text-align:center; padding-top:4px;"><div style="font-size:0.55rem; color:#4a5e60;">CONF.</div><div style="font-size:1rem; font-weight:800; color:' + cc + ';">' + str(r["conf"]) + '</div></div>', unsafe_allow_html=True)
+                            with tc5:
+                                st.markdown('<div style="text-align:center; padding-top:4px;"><div style="font-size:0.55rem; color:#4a5e60;">COTE</div><div style="font-size:0.85rem; color:#c8c0b0;">' + cd + '</div></div>', unsafe_allow_html=True)
+                            st.markdown('<div style="border-top:1px solid #1a2a2c;"></div>', unsafe_allow_html=True)
+
+                        # Métriques
+                        st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
+                        mg1, mg2, mg3, mg4 = st.columns(4)
+                        with mg1:
+                            st.markdown('<div style="text-align:center;background:#111a1c;border-radius:12px;padding:14px;"><div style="font-size:0.58rem;color:#4a5e60;letter-spacing:2px;margin-bottom:4px;">PROBA GLOBALE</div><div style="font-size:1.8rem;font-weight:900;color:' + vc + ';">' + f"{pg:.1%}" + '</div></div>', unsafe_allow_html=True)
+                        with mg2:
+                            st.markdown('<div style="text-align:center;background:#111a1c;border-radius:12px;padding:14px;"><div style="font-size:0.58rem;color:#4a5e60;letter-spacing:2px;margin-bottom:4px;">COTE COMBINÉE</div><div style="font-size:1.8rem;font-weight:900;color:#e8e0d0;">' + (f"{cg:.2f}" if hao else "—") + '</div></div>', unsafe_allow_html=True)
+                        with mg3:
+                            ec2 = "#3dd68c" if esp_g and esp_g > 0 else "#e07878"
+                            st.markdown('<div style="text-align:center;background:#111a1c;border-radius:12px;padding:14px;"><div style="font-size:0.58rem;color:#4a5e60;letter-spacing:2px;margin-bottom:4px;">ESPÉRANCE/€misé</div><div style="font-size:1.8rem;font-weight:900;color:' + ec2 + ';">' + (f"{esp_g:+.2f}€" if esp_g is not None else "—") + '</div></div>', unsafe_allow_html=True)
+                        with mg4:
+                            st.markdown('<div style="text-align:center;background:#111a1c;border-radius:12px;padding:14px;"><div style="font-size:0.58rem;color:#4a5e60;letter-spacing:2px;margin-bottom:4px;">KELLY BANKROLL</div><div style="font-size:1.8rem;font-weight:900;color:#f5c842;">' + (f"{kelly_g*100:.1f}%" if kelly_g is not None else "—") + '</div></div>', unsafe_allow_html=True)
+
+                        # Verdict + conseils
+                        weakest_g = min(sel_g, key=lambda r: r["proba"])
+                        warns_g = []
+                        if pg < 0.20:
+                            warns_g.append("🚫 Moins de 20% de chances — retire des matchs")
+                        if not hao:
+                            warns_g.append("⚠️ Cotes manquantes — entre-les dans les expanders pour voir l'espérance")
+                        if kelly_g is not None and kelly_g < 0.01:
+                            warns_g.append("📉 Espérance négative — pas rentable à long terme")
+                        warns_g.append("🔍 Sélection la plus risquée : " + weakest_g["joueur"] + f" ({weakest_g['proba']:.0%}) — retire-la si tu hésites")
+                        warns_html_g = "".join('<div style="font-size:0.8rem;color:#a0b0b2;margin-bottom:3px;">' + w + '</div>' for w in warns_g)
+                        st.markdown(
+                            '<div style="background:#111a1c;border-left:4px solid ' + vc + ';border-radius:10px;padding:16px 20px;margin-top:12px;">'
+                            '<div style="font-size:1rem;font-weight:700;color:' + vc + ';margin-bottom:8px;">' + vi + ' ' + vt + '</div>'
+                            + warns_html_g + '</div>',
+                            unsafe_allow_html=True
+                        )
+
+                        if excl_g:
+                            excl_txt = " · ".join(
+                                r["joueur"] + f" ({r['proba']:.0%})"
+                                for r in sorted(excl_g, key=lambda r: r["proba"], reverse=True)[:6]
+                            )
+                            st.markdown('<div style="font-size:0.72rem;color:#4a5e60;margin-top:8px;padding:8px 14px;background:#0e1517;border-radius:8px;">🗑️ Non retenus : ' + excl_txt + '</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# TAB — COMBINÉ
+# ══════════════════════════════════════════════════════════════
+with tab_comb:
+    import math as _math
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <div class="card-title" style="margin-bottom:6px;">🎰 Constructeur de Combiné</div>
+        <div style="font-size:0.82rem; color:#4a5e60;">
+            Ajoute tes sélections · l'app calcule la proba réelle et te dit si le combiné vaut le coup
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if atp_data is None:
+        st.error("Données ATP non disponibles.")
+    else:
+        # ── Chargement global des cotes (1 requête) ───────────
+        cb_col1, cb_col2 = st.columns([2, 3])
+        with cb_col1:
+            if st.button("🔍 Charger toutes les cotes live", key="comb_load_odds",
+                         help="Une seule requête API pour tous tes matchs — économise le quota"):
+                with st.spinner("Chargement des cotes ATP en cours..."):
+                    global_odds = fetch_all_atp_odds()
+                st.session_state["odds_global_index"] = global_odds
+                if global_odds.get("ok"):
+                    n_t = global_odds.get("total", 0)
+                    cr  = global_odds.get("credits_remaining", "?")
+                    keys = global_odds.get("sport_keys", [])
+                    st.success(
+                        f"✅ {n_t} matchs trouvés · {len(keys)} tournois ATP "
+                        f"· {cr} crédits restants"
+                    )
+                else:
+                    err = global_odds.get("error", "")
+                    st.warning(
+                        "⚠️ API inaccessible depuis Streamlit Cloud. "
+                        "Cause probable : restrictions réseau du serveur. "
+                        "Entre les cotes manuellement, ou héberge l'app ailleurs (Railway, Render…)."
+                    )
+                    with st.expander("Détail erreur"):
+                        st.code(err)
+        with cb_col2:
+            gidx = st.session_state.get("odds_global_index", {})
+            if gidx.get("ok"):
+                n_ev = gidx.get("total", 0)
+                cr   = gidx.get("credits_remaining", "?")
+                st.markdown(
+                    f'<div style="color:#3dd68c; font-size:0.8rem; padding-top:10px;">' +
+                    f'✅ {n_ev} matchs · {cr} crédits restants</div>',
+                    unsafe_allow_html=True
+                )
+            elif gidx.get("ok") == False:
+                st.markdown(
+                    '<div style="color:#e07878; font-size:0.8rem; padding-top:10px;">' +
+                    '⚠️ API indisponible — saisie manuelle</div>',
+                    unsafe_allow_html=True
+                )
+
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+        # ── Paramètres combiné ────────────────────────────────
+        n_comb = st.number_input("Nombre de sélections", min_value=2, max_value=20, value=4, step=1, key="comb_n")
+        mise_comb = st.number_input("Mise (€)", min_value=0.10, max_value=1000.0, value=1.0, step=0.10, key="comb_mise", format="%.2f")
+
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+        # ── Saisie des sélections ─────────────────────────────
+        selections = []
+        global_idx = st.session_state.get("odds_global_index", {}).get("index", {})
+
+        for ci in range(int(n_comb)):
+            st.markdown(f'<div style="font-size:0.7rem; color:#3dd68c; letter-spacing:3px; text-transform:uppercase; margin-bottom:8px;">Sélection {ci+1}</div>', unsafe_allow_html=True)
+
+            sc1, sc2, sc3 = st.columns([2, 2, 3])
+            with sc1:
+                j1_c = st.selectbox("Joueur 1", atp_player_list, key=f"comb_j1_{ci}",
+                                    index=None, placeholder="Joueur 1...")
+            with sc2:
+                j2_opts = [p for p in atp_player_list if p != j1_c] if j1_c else atp_player_list
+                j2_c = st.selectbox("Joueur 2", j2_opts, key=f"comb_j2_{ci}",
+                                    index=None, placeholder="Joueur 2...")
+            with sc3:
+                tourn_c = st.selectbox("Tournoi", TOURN_NAMES, key=f"comb_tourn_{ci}")
+
+            surf_c, level_c, bo_c = TOURN_DICT.get(tourn_c, ("Hard","A",3))
+            sc_color = {"Hard":"#4a90d9","Clay":"#c8703a","Grass":"#3dd68c"}.get(surf_c,"#4a5e60")
+
+            # Auto-recherche cotes si index chargé
+            auto_odds_j1, auto_odds_j2 = "", ""
+            if j1_c and j2_c and global_idx:
+                res_c = search_odds_from_index(global_idx, j1_c, j2_c)
+                if res_c.get("found"):
+                    auto_odds_j1 = str(res_c["odds_j1"])
+                    auto_odds_j2 = str(res_c["odds_j2"])
+
+            # Sélection du joueur favori + cote
+            oc1, oc2, oc3 = st.columns([3, 1, 1])
+            with oc1:
+                sel_player = st.selectbox(
+                    "Jouer sur", [j1_c, j2_c] if j1_c and j2_c else ["—"],
+                    key=f"comb_sel_{ci}", label_visibility="collapsed"
+                ) if j1_c and j2_c else None
+            with oc2:
+                cote_c = st.text_input("Cote bookmaker", key=f"comb_cote_{ci}",
+                                       placeholder="ex: 1.45",
+                                       value=auto_odds_j1 if sel_player == j1_c else auto_odds_j2 if sel_player == j2_c else "")
+            with oc3:
+                st.markdown(f'<div style="background:{sc_color}22; color:{sc_color}; border:1px solid {sc_color}44; padding:6px 10px; border-radius:8px; font-size:0.72rem; text-align:center; margin-top:4px;">{surf_c}</div>', unsafe_allow_html=True)
+
+            selections.append({
+                "j1": j1_c, "j2": j2_c, "joueur": sel_player,
+                "surface": surf_c, "level": level_c, "best_of": bo_c,
+                "cote": cote_c, "tournoi": tourn_c,
+            })
+
+            if ci < int(n_comb)-1:
+                st.markdown('<div style="border-top:1px solid #1a2a2c; margin:12px 0;"></div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+        # ── Bouton analyser ───────────────────────────────────
+        col_comb_btn = st.columns([1,2,1])
+        with col_comb_btn[1]:
+            comb_clicked = st.button("⚡ ANALYSER LE COMBINÉ", use_container_width=True, key="comb_btn")
+
+        if comb_clicked:
+            # Filtrer sélections valides
+            valid_sels = [s for s in selections if s["j1"] and s["j2"] and s["joueur"] and s["joueur"] != "—"]
+            if len(valid_sels) < 2:
+                st.warning("Renseigne au moins 2 sélections complètes.")
+            else:
+                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+                # ── Calcul proba + cote pour chaque sélection ─
+                results_comb = []
+                model_cache_c, scaler_cache_c = {}, {}
+
+                for s in valid_sels:
+                    if s["surface"] not in model_cache_c:
+                        model_cache_c[s["surface"]] = load_model("atp", s["surface"])
+                        scaler_cache_c[s["surface"]] = load_scaler("atp", s["surface"])
+                    model_c  = model_cache_c[s["surface"]]
+                    scaler_c = scaler_cache_c[s["surface"]]
+
+                    s1_c = get_player_stats(atp_data, s["j1"], s["surface"])
+                    s2_c = get_player_stats(atp_data, s["j2"], s["surface"])
+                    h2h_c = get_h2h(atp_data, s["j1"], s["j2"], s["surface"])
+
+                    proba_c = None
+                    if model_c and s1_c and s2_c:
+                        try:
+                            n_c = model_c.input_shape[-1]
+                        except Exception:
+                            n_c = 26
+                        fv_c = build_feature_vector(s1_c, s2_c, h2h_c["h2h_score"],
+                                                    s["surface"], float(s["best_of"]),
+                                                    s["level"], n_features=n_c)
+                        X_c = np.array(fv_c).reshape(1,-1)
+                        if scaler_c:
+                            try:
+                                if getattr(scaler_c,"n_features_in_",None) == X_c.shape[1]:
+                                    X_c = scaler_c.transform(X_c)
+                            except Exception:
+                                pass
+                        raw = float(model_c.predict(X_c, verbose=0)[0][0])
+                        proba_c = raw if s["joueur"] == s["j1"] else 1 - raw
+                    else:
+                        proba_c = 0.55  # fallback si pas de modèle
+
+                    # Cote bookmaker
+                    try:
+                        cote_val = float(str(s["cote"]).replace(",",".").strip()) if s["cote"] else None
+                    except Exception:
+                        cote_val = None
+
+                    results_comb.append({
+                        **s,
+                        "proba_model": proba_c,
+                        "cote_val": cote_val,
+                        "implied": round(1/cote_val, 4) if cote_val and cote_val > 1 else None,
+                        "edge": round(proba_c - 1/cote_val, 4) if cote_val and cote_val > 1 else None,
+                    })
+
+                # ── Tableau récapitulatif ─────────────────────
+                st.markdown("""
+                <div style="font-size:0.72rem; color:#4a5e60; letter-spacing:2px;
+                            text-transform:uppercase; margin-bottom:12px;">Récapitulatif des sélections</div>
+                """, unsafe_allow_html=True)
+
+                for r in results_comb:
+                    is_value = r["edge"] is not None and r["edge"] > 0.04
+                    no_value = r["edge"] is not None and r["edge"] <= 0.04
+                    edge_color = "#3dd68c" if is_value else "#e07878" if no_value else "#4a5e60"
+                    edge_txt = f"{r['edge']*100:+.1f}%" if r["edge"] is not None else "—"
+                    impl_txt = f"{r['implied']:.0%}" if r["implied"] else "—"
+                    cote_txt = str(r["cote_val"]) if r["cote_val"] else "—"
+                    surf_c2 = {"Hard":"#4a90d9","Clay":"#c8703a","Grass":"#3dd68c"}.get(r["surface"],"#4a5e60")
+
+                    st.markdown(
+                        f'<div style="display:flex; align-items:center; gap:12px; padding:10px 16px;'
+                        f' background:#111a1c; border-radius:10px; margin-bottom:6px; flex-wrap:wrap;">'
+                        f'<div style="flex:3; min-width:160px;">'
+                        f'<div style="font-size:0.88rem; font-weight:600; color:#e8e0d0;">{r["joueur"]}</div>'
+                        f'<div style="font-size:0.68rem; color:#4a5e60;">{r["j1"]} vs {r["j2"]} · {r["tournoi"]}</div>'
+                        f'</div>'
+                        f'<div style="background:{surf_c2}22; color:{surf_c2}; border:1px solid {surf_c2}44;'
+                        f' padding:2px 8px; border-radius:20px; font-size:0.62rem;">{r["surface"]}</div>'
+                        f'<div style="text-align:center; min-width:60px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">MODÈLE</div>'
+                        f'<div style="font-size:1rem; font-weight:700; color:#e8e0d0;">{r["proba_model"]:.0%}</div>'
+                        f'</div>'
+                        f'<div style="text-align:center; min-width:50px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">COTE</div>'
+                        f'<div style="font-size:1rem; font-weight:700; color:#c8c0b0;">{cote_txt}</div>'
+                        f'</div>'
+                        f'<div style="text-align:center; min-width:50px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">BK IMPL.</div>'
+                        f'<div style="font-size:0.88rem; color:#4a5e60;">{impl_txt}</div>'
+                        f'</div>'
+                        f'<div style="text-align:center; min-width:60px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60;">EDGE</div>'
+                        f'<div style="font-size:0.95rem; font-weight:700; color:{edge_color};">{edge_txt}</div>'
+                        f'</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # ── Stats globales du combiné ─────────────────
+                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+                proba_globale = 1.0
+                cote_globale  = 1.0
+                n_value       = 0
+                n_no_value    = 0
+                n_weak        = 0  # proba < 60%
+
+                for r in results_comb:
+                    proba_globale *= r["proba_model"]
+                    if r["cote_val"]: cote_globale *= r["cote_val"]
+                    if r["edge"] is not None:
+                        if r["edge"] > 0.04: n_value += 1
+                        else: n_no_value += 1
+                    if r["proba_model"] < 0.60: n_weak += 1
+
+                gain_potentiel = mise_comb * cote_globale
+                esperance      = proba_globale * gain_potentiel - mise_comb
+                kelly          = max(0, (proba_globale * cote_globale - 1) / (cote_globale - 1)) if cote_globale > 1 else 0
+
+                # Verdict
+                if proba_globale >= 0.50 and n_no_value == 0:
+                    verdict_color = "#3dd68c"; verdict_icon = "✅"; verdict_txt = "COMBINÉ SOLIDE"
+                elif proba_globale >= 0.30:
+                    verdict_color = "#f5c842"; verdict_icon = "⚠️"; verdict_txt = "COMBINÉ RISQUÉ"
+                else:
+                    verdict_color = "#e07878"; verdict_icon = "🚫"; verdict_txt = "COMBINÉ TRÈS RISQUÉ"
+
+                # Carte principale
+                sg1, sg2, sg3, sg4 = st.columns(4)
+                with sg1:
+                    st.markdown(
+                        f'<div style="text-align:center; padding:16px; background:#111a1c; border-radius:12px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">PROBA RÉELLE</div>'
+                        f'<div style="font-size:2rem; font-weight:900; color:{verdict_color}; font-family:Playfair Display,serif;">{proba_globale:.1%}</div>'
+                        f'<div style="font-size:0.7rem; color:#4a5e60; margin-top:4px;">{len(results_comb)} sélections</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with sg2:
+                    st.markdown(
+                        f'<div style="text-align:center; padding:16px; background:#111a1c; border-radius:12px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">COTE COMBINÉE</div>'
+                        f'<div style="font-size:2rem; font-weight:900; color:#e8e0d0; font-family:Playfair Display,serif;">{cote_globale:.2f}</div>'
+                        f'<div style="font-size:0.7rem; color:#4a5e60; margin-top:4px;">Gain si victoire</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with sg3:
+                    esp_color = "#3dd68c" if esperance > 0 else "#e07878"
+                    st.markdown(
+                        f'<div style="text-align:center; padding:16px; background:#111a1c; border-radius:12px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">ESPÉRANCE</div>'
+                        f'<div style="font-size:2rem; font-weight:900; color:{esp_color}; font-family:Playfair Display,serif;">{esperance:+.2f}€</div>'
+                        f'<div style="font-size:0.7rem; color:#4a5e60; margin-top:4px;">Pour {mise_comb:.2f}€ misés</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with sg4:
+                    st.markdown(
+                        f'<div style="text-align:center; padding:16px; background:#111a1c; border-radius:12px;">'
+                        f'<div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">GAIN POTENTIEL</div>'
+                        f'<div style="font-size:2rem; font-weight:900; color:#c8c0b0; font-family:Playfair Display,serif;">{gain_potentiel:.2f}€</div>'
+                        f'<div style="font-size:0.7rem; color:#4a5e60; margin-top:4px;">Mise × cote combinée</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # ── Verdict final ─────────────────────────────
+                st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
+
+                warnings_list = []
+                if n_weak > 0:
+                    warnings_list.append(f"⚠️ {n_weak} sélection(s) avec proba < 60% — point faible du combiné")
+                if n_no_value > 0:
+                    warnings_list.append(f"❌ {n_no_value} sélection(s) sans value (bookmaker surpaie le favori)")
+                if len(results_comb) > 8:
+                    warnings_list.append(f"🚫 Combiné de {len(results_comb)} matchs — proba mathématiquement très faible")
+                if proba_globale < 0.05:
+                    warnings_list.append("🚫 Moins de 5% de chances — c'est de la loterie")
+                if esperance < 0:
+                    warnings_list.append(f"📉 Espérance négative ({esperance:.2f}€) — non rentable sur le long terme")
+                if kelly > 0:
+                    warnings_list.append(f"💡 Critère Kelly suggère de miser {kelly*100:.1f}% de ta bankroll")
+
+                verdict_html = (
+                    f'<div style="padding:20px 24px; background:#111a1c; border-radius:12px;'
+                    f' border-left:4px solid {verdict_color}; margin-bottom:12px;">'
+                    f'<div style="font-size:1.1rem; font-weight:700; color:{verdict_color}; margin-bottom:8px;">'
+                    f'{verdict_icon} {verdict_txt}</div>'
+                )
+                for w in warnings_list:
+                    verdict_html += f'<div style="font-size:0.82rem; color:#a0b0b2; margin-bottom:4px;">{w}</div>'
+                if not warnings_list:
+                    verdict_html += '<div style="font-size:0.82rem; color:#3dd68c;">Toutes les sélections ont une value positive — combiné cohérent.</div>'
+                verdict_html += '</div>'
+                st.markdown(verdict_html, unsafe_allow_html=True)
+
+                # ── Sélection la plus risquée ─────────────────
+                weakest = min(results_comb, key=lambda r: r["proba_model"])
+                st.markdown(
+                    f'<div style="font-size:0.75rem; color:#4a5e60; padding:8px 16px; background:#0e1517;'
+                    f' border-radius:8px;">🔍 Sélection la plus risquée : '
+                    f'<span style="color:#f5c842; font-weight:600;">{weakest["joueur"]}</span>'
+                    f' ({weakest["proba_model"]:.0%}) — si tu hésites, retire celle-là en premier.</div>',
+                    unsafe_allow_html=True
+                )
 
 # ══════════════════════════════════════════════════════════════
 # TAB 2 — EXPLORE
