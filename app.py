@@ -4,14 +4,10 @@ import pandas as pd
 from pathlib import Path
 import joblib
 import json
-import plotly.graph_objects as go
-import plotly.express as px
 from datetime import datetime, timedelta
 import time
 import hashlib
 import base64
-from PIL import Image
-import io
 
 # Configuration de la page - DOIT ÊTRE LA PREMIÈRE COMMANDE STREAMLIT
 st.set_page_config(
@@ -34,10 +30,9 @@ MODELS_DIR = ROOT_DIR / "models"
 DATA_DIR = ROOT_DIR / "src" / "data" / "raw" / "tml-tennis"
 CACHE_DIR = ROOT_DIR / "cache"
 HIST_DIR = ROOT_DIR / "history"
-ASSETS_DIR = ROOT_DIR / "assets"
 
 # Création des dossiers
-for dir_path in [MODELS_DIR, DATA_DIR, CACHE_DIR, HIST_DIR, ASSETS_DIR]:
+for dir_path in [MODELS_DIR, DATA_DIR, CACHE_DIR, HIST_DIR]:
     dir_path.mkdir(exist_ok=True, parents=True)
 
 # Fichiers d'historique
@@ -83,28 +78,22 @@ COLORS = {
     "surface_hard": "#0079FF",
     "surface_clay": "#E67E22",
     "surface_grass": "#00DFA2",
-    "surface_hard_bg": "rgba(0, 121, 255, 0.1)",
-    "surface_clay_bg": "rgba(230, 126, 34, 0.1)",
-    "surface_grass_bg": "rgba(0, 223, 162, 0.1)",
 }
 
 # Configuration des surfaces
 SURFACE_CONFIG = {
     "Hard": {
         "color": COLORS["surface_hard"],
-        "bg_color": COLORS["surface_hard_bg"],
         "icon": "🟦",
         "description": "Surface dure - Jeu rapide"
     },
     "Clay": {
         "color": COLORS["surface_clay"],
-        "bg_color": COLORS["surface_clay_bg"],
         "icon": "🟧",
         "description": "Terre battue - Jeu lent"
     },
     "Grass": {
         "color": COLORS["surface_grass"],
-        "bg_color": COLORS["surface_grass_bg"],
         "icon": "🟩",
         "description": "Gazon - Jeu très rapide"
     }
@@ -170,7 +159,6 @@ TOURNAMENTS_ATP = [
     ("Atlanta", "Hard", "A", 3),
     ("Stockholm", "Hard", "A", 3),
     ("Antwerp", "Hard", "A", 3),
-    ("St. Petersburg", "Hard", "A", 3),
 ]
 
 TOURN_DICT = {t[0]: (t[1], t[2], t[3]) for t in TOURNAMENTS_ATP}
@@ -287,6 +275,7 @@ def load_css():
             letter-spacing: 0.3px;
             text-transform: uppercase;
             gap: 0.25rem;
+            margin: 0.25rem;
         }
 
         .badge-hard {
@@ -501,7 +490,7 @@ def load_css():
         }
 
         /* Alertes */
-        [data-testid="stAlert"] {
+        .stAlert {
             background: rgba(255, 255, 255, 0.02) !important;
             border: 1px solid rgba(255, 255, 255, 0.05) !important;
             border-left: 4px solid var(--primary) !important;
@@ -534,57 +523,6 @@ def load_css():
         .stRadio [data-checked="true"] {
             background: var(--primary) !important;
             border-color: var(--primary) !important;
-        }
-
-        /* Tooltips personnalisés */
-        .tooltip {
-            position: relative;
-            display: inline-block;
-        }
-
-        .tooltip .tooltip-text {
-            visibility: hidden;
-            background: var(--dark-light);
-            color: var(--white);
-            text-align: center;
-            padding: 0.5rem 1rem;
-            border-radius: var(--radius-md);
-            position: absolute;
-            z-index: 1000;
-            bottom: 125%;
-            left: 50%;
-            transform: translateX(-50%);
-            opacity: 0;
-            transition: opacity 0.2s;
-            font-size: 0.8rem;
-            white-space: nowrap;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            box-shadow: var(--shadow-lg);
-        }
-
-        .tooltip:hover .tooltip-text {
-            visibility: visible;
-            opacity: 1;
-        }
-
-        /* Animations */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .fade-in {
-            animation: fadeIn 0.5s ease-out;
-        }
-
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
-        }
-
-        .pulse {
-            animation: pulse 2s infinite;
         }
 
         /* Scrollbar */
@@ -715,16 +653,6 @@ def load_css():
         }
 
         /* Loading spinner */
-        .loading-spinner {
-            display: inline-block;
-            width: 40px;
-            height: 40px;
-            border: 3px solid rgba(255, 255, 255, 0.1);
-            border-radius: 50%;
-            border-top-color: var(--primary);
-            animation: spin 1s ease-in-out infinite;
-        }
-
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -768,19 +696,6 @@ def load_css():
             padding: 1rem;
             border-radius: var(--radius-md);
             margin: 1rem 0;
-        }
-
-        /* Hover effects */
-        .hover-lift {
-            transition: var(--transition);
-        }
-
-        .hover-lift:hover {
-            transform: translateY(-2px);
-        }
-
-        .hover-glow:hover {
-            box-shadow: 0 0 20px rgba(0, 223, 162, 0.2);
         }
 
         /* Typography */
@@ -894,6 +809,42 @@ def load_css():
 load_css()
 
 # ─────────────────────────────────────────────────────────────
+# GESTION DES APIS
+# ─────────────────────────────────────────────────────────────
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+
+def get_groq_key():
+    """Récupère la clé API Groq"""
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except:
+        import os
+        return os.environ.get("GROQ_API_KEY", None)
+
+def call_groq_api(prompt):
+    """Appelle l'API Groq"""
+    if not GROQ_AVAILABLE:
+        return None
+    api_key = get_groq_key()
+    if not api_key:
+        return None
+    try:
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Erreur API: {str(e)}"
+
+# ─────────────────────────────────────────────────────────────
 # FONCTIONS UTILITAIRES
 # ─────────────────────────────────────────────────────────────
 def format_number(num, decimals=2):
@@ -944,13 +895,10 @@ def create_badge(text, type="primary"):
         "clay": COLORS["surface_clay"],
         "grass": COLORS["surface_grass"],
     }
-    bg_color = f"rgba({int(colors.get(type, COLORS['primary'])[1:3], 16)}, {int(colors.get(type, COLORS['primary'])[3:5], 16)}, {int(colors.get(type, COLORS['primary'])[5:7], 16)}, 0.1)"
+    color = colors.get(type, COLORS["primary"])
+    bg_color = f"rgba({int(color[1:3], 16)}, {int(color[3:5], 16)}, {int(color[5:7], 16)}, 0.1)"
     return f"""
-    <span style="display: inline-flex; align-items: center; padding: 0.25rem 0.75rem; 
-                 background: {bg_color}; color: {colors.get(type, COLORS['primary'])}; 
-                 border: 1px solid {bg_color}; border-radius: 20px; 
-                 font-size: 0.7rem; font-weight: 600; letter-spacing: 0.5px; 
-                 text-transform: uppercase; gap: 0.25rem;">
+    <span class="badge" style="background: {bg_color}; color: {color}; border: 1px solid {bg_color};">
         {text}
     </span>
     """
@@ -974,42 +922,6 @@ def create_stat_row(key, value, value_color=COLORS["white"]):
     """
 
 # ─────────────────────────────────────────────────────────────
-# GESTION DES APIS
-# ─────────────────────────────────────────────────────────────
-try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
-
-def get_groq_key():
-    """Récupère la clé API Groq"""
-    try:
-        return st.secrets["GROQ_API_KEY"]
-    except:
-        import os
-        return os.environ.get("GROQ_API_KEY", None)
-
-def call_groq_api(prompt):
-    """Appelle l'API Groq"""
-    if not GROQ_AVAILABLE:
-        return None
-    api_key = get_groq_key()
-    if not api_key:
-        return None
-    try:
-        client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=800,
-            temperature=0.3,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Erreur API: {str(e)}"
-
-# ─────────────────────────────────────────────────────────────
 # CHARGEMENT DES DONNÉES
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
@@ -1019,6 +931,9 @@ def load_tennis_data():
         return None, None
     
     csv_files = list(DATA_DIR.glob("*.csv"))
+    if not csv_files:
+        return None, None
+    
     atp_data = []
     wta_data = []
     
@@ -1029,7 +944,8 @@ def load_tennis_data():
                 atp_data.append(df)
             else:
                 wta_data.append(df)
-        except:
+        except Exception as e:
+            st.warning(f"Erreur lors du chargement de {f.name}: {e}")
             continue
     
     atp = pd.concat(atp_data, ignore_index=True) if atp_data else None
@@ -1059,81 +975,73 @@ def load_model(tour, surface):
 # ─────────────────────────────────────────────────────────────
 def get_player_stats(df, player, surface=None, n_matches=20):
     """Calcule les statistiques d'un joueur"""
-    if df is None:
+    if df is None or player is None:
+        return None
+    
+    # Vérifier les colonnes disponibles
+    winner_col = 'winner_name' if 'winner_name' in df.columns else None
+    loser_col = 'loser_name' if 'loser_name' in df.columns else None
+    
+    if not winner_col or not loser_col:
         return None
     
     # Filtrer les matchs du joueur
-    matches = df[(df['winner_name'] == player) | (df['loser_name'] == player)].copy()
+    matches = df[(df[winner_col] == player) | (df[loser_col] == player)].copy()
     if len(matches) == 0:
         return None
-    
-    # Trier par date
-    matches = matches.sort_values('date', ascending=False) if 'date' in matches.columns else matches
     
     # Statistiques de base
     stats = {
         'name': player,
         'matches_played': len(matches),
-        'wins': len(matches[matches['winner_name'] == player]),
-        'losses': len(matches[matches['loser_name'] == player]),
+        'wins': len(matches[matches[winner_col] == player]),
+        'losses': len(matches[matches[loser_col] == player]),
     }
     
     # Win rate
     stats['win_rate'] = stats['wins'] / stats['matches_played'] if stats['matches_played'] > 0 else 0
     
-    # Classement moyen
-    rank_col = 'winner_rank' if 'winner_rank' in matches.columns else None
-    if rank_col:
-        player_ranks = []
-        for _, row in matches.iterrows():
-            if row['winner_name'] == player and pd.notna(row['winner_rank']):
-                player_ranks.append(row['winner_rank'])
-            elif row['loser_name'] == player and pd.notna(row['loser_rank']):
-                player_ranks.append(row['loser_rank'])
-        stats['avg_rank'] = np.mean(player_ranks) if player_ranks else None
-    else:
-        stats['avg_rank'] = None
-    
     return stats
 
 def get_h2h_stats(df, player1, player2):
     """Calcule les statistiques H2H"""
-    if df is None:
+    if df is None or player1 is None or player2 is None:
         return None
     
-    h2h = df[((df['winner_name'] == player1) & (df['loser_name'] == player2)) |
-             ((df['winner_name'] == player2) & (df['loser_name'] == player1))].copy()
+    winner_col = 'winner_name' if 'winner_name' in df.columns else None
+    loser_col = 'loser_name' if 'loser_name' in df.columns else None
+    
+    if not winner_col or not loser_col:
+        return None
+    
+    h2h = df[((df[winner_col] == player1) & (df[loser_col] == player2)) |
+             ((df[winner_col] == player2) & (df[loser_col] == player1))].copy()
     
     if len(h2h) == 0:
         return None
     
     stats = {
         'total_matches': len(h2h),
-        f'{player1}_wins': len(h2h[h2h['winner_name'] == player1]),
-        f'{player2}_wins': len(h2h[h2h['winner_name'] == player2]),
-        'last_matches': h2h.sort_values('date', ascending=False).head(5) if 'date' in h2h.columns else h2h.head(5)
+        f'{player1}_wins': len(h2h[h2h[winner_col] == player1]),
+        f'{player2}_wins': len(h2h[h2h[winner_col] == player2]),
     }
     
     return stats
 
 def calculate_probability(stats1, stats2, h2h, surface):
     """Calcule la probabilité de victoire"""
-    # Implémentation simplifiée - à remplacer par le vrai modèle
+    if stats1 is None or stats2 is None:
+        return 0.5
+    
     score = 0.5
     
-    if stats1 and stats2:
-        # Facteur classement
-        if stats1.get('avg_rank') and stats2.get('avg_rank'):
-            rank_diff = stats2['avg_rank'] - stats1['avg_rank']
-            score += rank_diff * 0.001
-        
-        # Facteur forme
-        score += (stats1['win_rate'] - stats2['win_rate']) * 0.3
+    # Facteur forme (win rate)
+    score += (stats1['win_rate'] - stats2['win_rate']) * 0.3
     
     # Facteur H2H
-    if h2h:
+    if h2h and h2h['total_matches'] > 0:
+        wins1 = h2h.get(f'{stats1["name"]}_wins', 0)
         total = h2h['total_matches']
-        wins1 = h2h[f'{stats1["name"]}_wins']
         score += (wins1 / total - 0.5) * 0.2
     
     # Normalisation
@@ -1147,8 +1055,8 @@ def calculate_confidence(proba, stats1, stats2, h2h):
     
     if stats1 and stats2:
         # Plus de matchs = plus de confiance
-        confidence += min(stats1['matches_played'] / 50, 20)
-        confidence += min(stats2['matches_played'] / 50, 20)
+        confidence += min(stats1['matches_played'] / 20, 20)
+        confidence += min(stats2['matches_played'] / 20, 20)
     
     if h2h and h2h['total_matches'] >= 3:
         confidence += 10
@@ -1180,7 +1088,7 @@ def save_prediction(pred_data):
         pred_data['date'] = datetime.now().isoformat()
     
     # Ajouter un ID unique
-    pred_data['id'] = hashlib.md5(f"{pred_data['date']}{pred_data['player1']}{pred_data['player2']}".encode()).hexdigest()[:8]
+    pred_data['id'] = hashlib.md5(f"{pred_data['date']}{pred_data.get('player1', '')}{pred_data.get('player2', '')}".encode()).hexdigest()[:8]
     
     history.append(pred_data)
     
@@ -1247,38 +1155,6 @@ def load_user_stats():
             return json.load(f)
     except:
         return {}
-
-def update_user_stats(prediction_correct=None, combine_won=None, amount=0):
-    """Met à jour les statistiques utilisateur"""
-    stats = load_user_stats()
-    
-    if prediction_correct is not None:
-        stats['total_predictions'] = stats.get('total_predictions', 0) + 1
-        if prediction_correct:
-            stats['correct_predictions'] = stats.get('correct_predictions', 0) + 1
-            stats['current_streak'] = stats.get('current_streak', 0) + 1
-            stats['best_streak'] = max(stats.get('best_streak', 0), stats['current_streak'])
-        else:
-            stats['current_streak'] = 0
-    
-    if combine_won is not None:
-        stats['total_combines'] = stats.get('total_combines', 0) + 1
-        if combine_won:
-            stats['won_combines'] = stats.get('won_combines', 0) + 1
-    
-    if amount > 0:
-        if combine_won:
-            stats['total_won'] = stats.get('total_won', 0) + amount
-        stats['total_invested'] = stats.get('total_invested', 0) + amount
-    
-    stats['last_updated'] = datetime.now().isoformat()
-    
-    try:
-        with open(USER_STATS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(stats, f, indent=2)
-        return True
-    except:
-        return False
 
 # ─────────────────────────────────────────────────────────────
 # INTERFACE PRINCIPALE
@@ -1378,61 +1254,15 @@ def show_dashboard(atp_data, wta_data):
     with col4:
         stats = load_user_stats()
         accuracy = (stats.get('correct_predictions', 0) / stats.get('total_predictions', 1)) * 100 if stats.get('total_predictions', 0) > 0 else 0
-        st.markdown(create_metric("Précision", f"{accuracy:.1f}", "%"), unsafe_allow_html=True)
+        st.markdown(create_metric("Précision", f"{accuracy:.1f}", "%", COLORS['success'] if accuracy >= 60 else COLORS['warning']), unsafe_allow_html=True)
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # Graphiques
-    col1, col2 = st.columns(2)
-    
-    with col1:
+    # Graphiques simples avec st.bar_chart
+    if atp_data is not None and 'surface' in atp_data.columns:
         st.markdown("<h3>📊 Répartition des surfaces</h3>", unsafe_allow_html=True)
-        if atp_data is not None and 'surface' in atp_data.columns:
-            surface_counts = atp_data['surface'].value_counts()
-            fig = px.pie(
-                values=surface_counts.values,
-                names=surface_counts.index,
-                color_discrete_map={
-                    'Hard': COLORS['surface_hard'],
-                    'Clay': COLORS['surface_clay'],
-                    'Grass': COLORS['surface_grass']
-                },
-                hole=0.4
-            )
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font_color='white',
-                showlegend=True,
-                legend=dict(font=dict(color='white'))
-            )
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        st.markdown("<h3>🏆 Tournois par niveau</h3>", unsafe_allow_html=True)
-        if atp_data is not None and 'tourney_level' in atp_data.columns:
-            level_counts = atp_data['tourney_level'].value_counts()
-            fig = px.bar(
-                x=level_counts.index,
-                y=level_counts.values,
-                color=level_counts.index,
-                color_discrete_map={
-                    'G': '#FFD700',
-                    'M': '#C0C0C0',
-                    '500': '#CD7F32',
-                    'A': COLORS['primary'],
-                    'F': '#9400D3'
-                }
-            )
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font_color='white',
-                xaxis_title="Niveau",
-                yaxis_title="Nombre de matchs",
-                showlegend=False
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        surface_counts = atp_data['surface'].value_counts()
+        st.bar_chart(surface_counts)
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
@@ -1442,22 +1272,38 @@ def show_dashboard(atp_data, wta_data):
     history = load_history()
     if history:
         df_history = pd.DataFrame(history[-10:])
-        df_history['date'] = pd.to_datetime(df_history['date']).dt.strftime('%d/%m/%Y %H:%M')
-        df_history['match'] = df_history['player1'] + " vs " + df_history['player2']
-        df_history['proba'] = df_history['proba'].apply(lambda x: f"{x:.1%}")
-        df_history['confiance'] = df_history['confidence'].apply(lambda x: f"{x}/100")
+        if 'date' in df_history.columns:
+            df_history['date'] = pd.to_datetime(df_history['date']).dt.strftime('%d/%m/%Y %H:%M')
+        df_history['match'] = df_history.get('player1', '') + " vs " + df_history.get('player2', '')
+        if 'proba' in df_history.columns:
+            df_history['proba'] = df_history['proba'].apply(lambda x: f"{x:.1%}" if isinstance(x, (int, float)) else x)
+        if 'confidence' in df_history.columns:
+            df_history['confiance'] = df_history['confidence'].apply(lambda x: f"{x}/100" if isinstance(x, (int, float)) else x)
         
-        st.dataframe(
-            df_history[['date', 'match', 'proba', 'confiance', 'surface']].rename(columns={
-                'date': 'Date',
-                'match': 'Match',
-                'proba': 'Probabilité',
-                'confiance': 'Confiance',
-                'surface': 'Surface'
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
+        display_cols = []
+        if 'date' in df_history.columns:
+            display_cols.append('date')
+        if 'match' in df_history.columns:
+            display_cols.append('match')
+        if 'proba' in df_history.columns:
+            display_cols.append('proba')
+        if 'confiance' in df_history.columns:
+            display_cols.append('confiance')
+        if 'surface' in df_history.columns:
+            display_cols.append('surface')
+        
+        if display_cols:
+            st.dataframe(
+                df_history[display_cols].rename(columns={
+                    'date': 'Date',
+                    'match': 'Match',
+                    'proba': 'Probabilité',
+                    'confiance': 'Confiance',
+                    'surface': 'Surface'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
     else:
         st.info("Aucune prédiction pour le moment. Commence par en faire une !")
 
@@ -1478,29 +1324,44 @@ def show_predictions(atp_data, wta_data):
         # Données actives
         df = atp_data if circuit == "ATP" else wta_data
         
-        if df is not None:
-            # Liste des joueurs
-            players = sorted(set(df['winner_name'].unique()) | set(df['loser_name'].unique()))
+        if df is not None and not df.empty:
+            # Vérifier les colonnes disponibles
+            winner_col = 'winner_name' if 'winner_name' in df.columns else None
+            loser_col = 'loser_name' if 'loser_name' in df.columns else None
             
-            # Sélection des joueurs
-            player1 = st.selectbox("Joueur 1", players, key="pred_p1")
-            
-            # Filtrer les joueurs pour éviter de sélectionner le même
-            players2 = [p for p in players if p != player1]
-            player2 = st.selectbox("Joueur 2", players2, key="pred_p2")
-            
-            # Sélection du tournoi
-            tournaments = sorted(df['tourney_name'].unique())
-            tournament = st.selectbox("Tournoi", tournaments)
-            
-            # Récupérer la surface
-            surface = df[df['tourney_name'] == tournament]['surface'].iloc[0] if tournament in df['tourney_name'].values else "Hard"
-            
-            # Afficher la surface
-            st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", surface.lower()), unsafe_allow_html=True)
+            if winner_col and loser_col:
+                # Liste des joueurs
+                players = sorted(set(df[winner_col].dropna().unique()) | set(df[loser_col].dropna().unique()))
+                
+                if players:
+                    # Sélection des joueurs
+                    player1 = st.selectbox("Joueur 1", players, key="pred_p1")
+                    
+                    # Filtrer les joueurs pour éviter de sélectionner le même
+                    players2 = [p for p in players if p != player1]
+                    player2 = st.selectbox("Joueur 2", players2, key="pred_p2")
+                    
+                    # Sélection du tournoi
+                    if 'tourney_name' in df.columns:
+                        tournaments = sorted(df['tourney_name'].dropna().unique())
+                        tournament = st.selectbox("Tournoi", tournaments) if tournaments else None
+                        
+                        # Récupérer la surface
+                        if tournament and 'surface' in df.columns:
+                            surface = df[df['tourney_name'] == tournament]['surface'].iloc[0] if tournament in df['tourney_name'].values else "Hard"
+                        else:
+                            surface = "Hard"
+                    else:
+                        tournament = None
+                        surface = "Hard"
+                        st.warning("Colonne 'tourney_name' non trouvée")
+                    
+                    # Afficher la surface
+                    if surface in SURFACE_CONFIG:
+                        st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", surface.lower()), unsafe_allow_html=True)
     
     with col2:
-        if player1 and player2 and tournament:
+        if player1 and player2:
             # Calcul des statistiques
             stats1 = get_player_stats(df, player1, surface)
             stats2 = get_player_stats(df, player2, surface)
@@ -1532,7 +1393,7 @@ def show_predictions(atp_data, wta_data):
                 pred_data = {
                     'player1': player1,
                     'player2': player2,
-                    'tournament': tournament,
+                    'tournament': tournament if tournament else "Inconnu",
                     'surface': surface,
                     'proba': proba,
                     'confidence': confidence,
@@ -1543,7 +1404,7 @@ def show_predictions(atp_data, wta_data):
                 else:
                     st.error("Erreur lors de la sauvegarde")
     
-    if player1 and player2 and tournament:
+    if player1 and player2 and 'df' in locals():
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         
         # Détails des statistiques
@@ -1556,8 +1417,6 @@ def show_predictions(atp_data, wta_data):
                 st.markdown(create_stat_row("Victoires", stats1['wins']), unsafe_allow_html=True)
                 st.markdown(create_stat_row("Défaites", stats1['losses']), unsafe_allow_html=True)
                 st.markdown(create_stat_row("Win rate", f"{stats1['win_rate']:.1%}"), unsafe_allow_html=True)
-                if stats1['avg_rank']:
-                    st.markdown(create_stat_row("Classement moyen", f"#{stats1['avg_rank']:.0f}"), unsafe_allow_html=True)
         
         with col2:
             st.markdown(f"<h4>{player2}</h4>", unsafe_allow_html=True)
@@ -1566,15 +1425,13 @@ def show_predictions(atp_data, wta_data):
                 st.markdown(create_stat_row("Victoires", stats2['wins']), unsafe_allow_html=True)
                 st.markdown(create_stat_row("Défaites", stats2['losses']), unsafe_allow_html=True)
                 st.markdown(create_stat_row("Win rate", f"{stats2['win_rate']:.1%}"), unsafe_allow_html=True)
-                if stats2['avg_rank']:
-                    st.markdown(create_stat_row("Classement moyen", f"#{stats2['avg_rank']:.0f}"), unsafe_allow_html=True)
         
         with col3:
             st.markdown("<h4>Face à Face</h4>", unsafe_allow_html=True)
             if h2h:
                 st.markdown(create_stat_row("Matchs", h2h['total_matches']), unsafe_allow_html=True)
-                st.markdown(create_stat_row(f"{player1}", h2h[f'{player1}_wins']), unsafe_allow_html=True)
-                st.markdown(create_stat_row(f"{player2}", h2h[f'{player2}_wins']), unsafe_allow_html=True)
+                st.markdown(create_stat_row(f"{player1}", h2h.get(f'{player1}_wins', 0)), unsafe_allow_html=True)
+                st.markdown(create_stat_row(f"{player2}", h2h.get(f'{player2}_wins', 0)), unsafe_allow_html=True)
             else:
                 st.info("Aucun face-à-face")
 
@@ -1600,103 +1457,117 @@ def show_multimatches(atp_data, wta_data):
     
     df = atp_data if circuit == "ATP" else wta_data
     
-    if df is not None:
-        players = sorted(set(df['winner_name'].unique()) | set(df['loser_name'].unique()))
-        tournaments = sorted(df['tourney_name'].unique())
+    if df is not None and not df.empty:
+        winner_col = 'winner_name' if 'winner_name' in df.columns else None
+        loser_col = 'loser_name' if 'loser_name' in df.columns else None
         
-        matches = []
-        
-        for i in range(n_matches):
-            with st.expander(f"Match {i+1}", expanded=i==0):
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    p1 = st.selectbox(f"Joueur 1", players, key=f"mm_p1_{i}")
-                
-                with col2:
-                    players2 = [p for p in players if p != p1]
-                    p2 = st.selectbox(f"Joueur 2", players2, key=f"mm_p2_{i}")
-                
-                with col3:
-                    tourn = st.selectbox(f"Tournoi", tournaments, key=f"mm_tourn_{i}")
-                
-                # Récupérer la surface
-                surface = df[df['tourney_name'] == tourn]['surface'].iloc[0] if tourn in df['tourney_name'].values else "Hard"
-                
-                # Cotes
-                col1, col2 = st.columns(2)
-                with col1:
-                    odds1 = st.text_input(f"Cote {p1}", key=f"mm_odds1_{i}", placeholder="1.75")
-                with col2:
-                    odds2 = st.text_input(f"Cote {p2}", key=f"mm_odds2_{i}", placeholder="2.10")
-                
-                matches.append({
-                    'player1': p1,
-                    'player2': p2,
-                    'tournament': tourn,
-                    'surface': surface,
-                    'odds1': odds1,
-                    'odds2': odds2,
-                    'stats1': get_player_stats(df, p1, surface) if p1 else None,
-                    'stats2': get_player_stats(df, p2, surface) if p2 else None,
-                    'h2h': get_h2h_stats(df, p1, p2) if p1 and p2 else None
-                })
-        
-        if st.button("🔍 Analyser tous les matchs", use_container_width=True):
-            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        if winner_col and loser_col:
+            players = sorted(set(df[winner_col].dropna().unique()) | set(df[loser_col].dropna().unique()))
             
-            results = []
+            tournaments = []
+            if 'tourney_name' in df.columns:
+                tournaments = sorted(df['tourney_name'].dropna().unique())
             
-            for i, match in enumerate(matches):
-                if match['player1'] and match['player2']:
-                    proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
-                    confidence = calculate_confidence(proba, match['stats1'], match['stats2'], match['h2h'])
+            matches = []
+            
+            for i in range(n_matches):
+                with st.expander(f"Match {i+1}", expanded=i==0):
+                    col1, col2, col3 = st.columns(3)
                     
-                    results.append({
-                        'match': i+1,
-                        'player1': match['player1'],
-                        'player2': match['player2'],
-                        'tournament': match['tournament'],
-                        'surface': match['surface'],
-                        'proba': proba,
-                        'confidence': confidence,
-                        'odds1': match['odds1'],
-                        'odds2': match['odds2']
+                    with col1:
+                        p1 = st.selectbox(f"Joueur 1", players, key=f"mm_p1_{i}")
+                    
+                    with col2:
+                        players2 = [p for p in players if p != p1]
+                        p2 = st.selectbox(f"Joueur 2", players2, key=f"mm_p2_{i}")
+                    
+                    with col3:
+                        tourn = st.selectbox(f"Tournoi", tournaments if tournaments else ["Inconnu"], key=f"mm_tourn_{i}")
+                    
+                    # Récupérer la surface
+                    surface = "Hard"
+                    if tourn and tourn != "Inconnu" and 'surface' in df.columns:
+                        surface_df = df[df['tourney_name'] == tourn]['surface']
+                        if not surface_df.empty:
+                            surface = surface_df.iloc[0]
+                    
+                    # Cotes
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        odds1 = st.text_input(f"Cote {p1}", key=f"mm_odds1_{i}", placeholder="1.75")
+                    with col2:
+                        odds2 = st.text_input(f"Cote {p2}", key=f"mm_odds2_{i}", placeholder="2.10")
+                    
+                    matches.append({
+                        'player1': p1,
+                        'player2': p2,
+                        'tournament': tourn,
+                        'surface': surface,
+                        'odds1': odds1,
+                        'odds2': odds2,
+                        'stats1': get_player_stats(df, p1, surface) if p1 else None,
+                        'stats2': get_player_stats(df, p2, surface) if p2 else None,
+                        'h2h': get_h2h_stats(df, p1, p2) if p1 and p2 else None
                     })
             
-            # Tableau des résultats
-            df_results = pd.DataFrame(results)
-            df_results['proba'] = df_results['proba'].apply(lambda x: f"{x:.1%}")
-            df_results['confidence'] = df_results['confidence'].apply(lambda x: f"{x:.0f}/100")
-            
-            st.dataframe(
-                df_results[['match', 'player1', 'player2', 'tournament', 'surface', 'proba', 'confidence']].rename(columns={
-                    'match': '#',
-                    'player1': 'Joueur 1',
-                    'player2': 'Joueur 2',
-                    'tournament': 'Tournoi',
-                    'surface': 'Surface',
-                    'proba': 'Probabilité',
-                    'confidence': 'Confiance'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Analyses IA si activé
-            if use_ai and GROQ_AVAILABLE:
+            if st.button("🔍 Analyser tous les matchs", use_container_width=True):
                 st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-                st.markdown("<h3>🤖 Analyses IA</h3>", unsafe_allow_html=True)
                 
-                for result in results:
-                    prompt = f"Analyse le match de tennis entre {result['player1']} et {result['player2']} sur surface {result['surface']}. La probabilité de victoire de {result['player1']} est de {result['proba']}. Donne une analyse concise en 3 points."
+                results = []
+                
+                for i, match in enumerate(matches):
+                    if match['player1'] and match['player2']:
+                        proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
+                        confidence = calculate_confidence(proba, match['stats1'], match['stats2'], match['h2h'])
+                        
+                        results.append({
+                            'match': i+1,
+                            'player1': match['player1'],
+                            'player2': match['player2'],
+                            'tournament': match['tournament'],
+                            'surface': match['surface'],
+                            'proba': proba,
+                            'confidence': confidence,
+                            'odds1': match['odds1'],
+                            'odds2': match['odds2']
+                        })
+                
+                if results:
+                    # Tableau des résultats
+                    df_results = pd.DataFrame(results)
+                    if 'proba' in df_results.columns:
+                        df_results['proba'] = df_results['proba'].apply(lambda x: f"{x:.1%}")
+                    if 'confidence' in df_results.columns:
+                        df_results['confidence'] = df_results['confidence'].apply(lambda x: f"{x:.0f}/100")
                     
-                    with st.spinner(f"Analyse du match {result['match']}..."):
-                        analysis = call_groq_api(prompt)
+                    st.dataframe(
+                        df_results[['match', 'player1', 'player2', 'tournament', 'surface', 'proba', 'confidence']].rename(columns={
+                            'match': '#',
+                            'player1': 'Joueur 1',
+                            'player2': 'Joueur 2',
+                            'tournament': 'Tournoi',
+                            'surface': 'Surface',
+                            'proba': 'Probabilité',
+                            'confidence': 'Confiance'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
                     
-                    if analysis:
-                        with st.expander(f"Match {result['match']}: {result['player1']} vs {result['player2']}"):
-                            st.markdown(analysis)
+                    # Analyses IA si activé
+                    if use_ai and GROQ_AVAILABLE:
+                        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                        st.markdown("<h3>🤖 Analyses IA</h3>", unsafe_allow_html=True)
+                        
+                        for result in results:
+                            prompt = f"Analyse le match de tennis entre {result['player1']} et {result['player2']} sur surface {result['surface']}. La probabilité de victoire de {result['player1']} est de {result['proba']}. Donne une analyse concise en 3 points."
+                            
+                            with st.spinner(f"Analyse du match {result['match']}..."):
+                                analysis = call_groq_api(prompt)
+                            
+                            if analysis:
+                                with st.expander(f"Match {result['match']}: {result['player1']} vs {result['player2']}"):
+                                    st.markdown(analysis)
 
 # ─────────────────────────────────────────────────────────────
 # COMBINÉS
@@ -1723,183 +1594,196 @@ def show_combines(atp_data, wta_data):
     
     df = atp_data if circuit == "ATP" else wta_data
     
-    if df is not None:
-        players = sorted(set(df['winner_name'].unique()) | set(df['loser_name'].unique()))
-        tournaments = sorted(df['tourney_name'].unique())
+    if df is not None and not df.empty:
+        winner_col = 'winner_name' if 'winner_name' in df.columns else None
+        loser_col = 'loser_name' if 'loser_name' in df.columns else None
         
-        matches = []
-        
-        for i in range(n_matches):
-            with st.container():
-                st.markdown(f"<h4>Match {i+1}</h4>", unsafe_allow_html=True)
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    p1 = st.selectbox(f"J1", players, key=f"comb_p1_{i}", label_visibility="collapsed", placeholder="Joueur 1")
-                
-                with col2:
-                    players2 = [p for p in players if p != p1]
-                    p2 = st.selectbox(f"J2", players2, key=f"comb_p2_{i}", label_visibility="collapsed", placeholder="Joueur 2")
-                
-                with col3:
-                    tourn = st.selectbox(f"T", tournaments, key=f"comb_tourn_{i}", label_visibility="collapsed", placeholder="Tournoi")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    odds1 = st.text_input(f"Cote {p1 if p1 else 'J1'}", key=f"comb_odds1_{i}", placeholder="1.75")
-                with col2:
-                    odds2 = st.text_input(f"Cote {p2 if p2 else 'J2'}", key=f"comb_odds2_{i}", placeholder="2.10")
-                
-                surface = df[df['tourney_name'] == tourn]['surface'].iloc[0] if tourn and tourn in df['tourney_name'].values else "Hard"
-                st.markdown(create_badge(surface, surface.lower()), unsafe_allow_html=True)
-                
+        if winner_col and loser_col:
+            players = sorted(set(df[winner_col].dropna().unique()) | set(df[loser_col].dropna().unique()))
+            
+            tournaments = []
+            if 'tourney_name' in df.columns:
+                tournaments = sorted(df['tourney_name'].dropna().unique())
+            
+            matches = []
+            
+            for i in range(n_matches):
+                with st.container():
+                    st.markdown(f"<h4>Match {i+1}</h4>", unsafe_allow_html=True)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        p1 = st.selectbox(f"J1", players, key=f"comb_p1_{i}", label_visibility="collapsed", placeholder="Joueur 1")
+                    
+                    with col2:
+                        players2 = [p for p in players if p != p1]
+                        p2 = st.selectbox(f"J2", players2, key=f"comb_p2_{i}", label_visibility="collapsed", placeholder="Joueur 2")
+                    
+                    with col3:
+                        tourn = st.selectbox(f"T", tournaments if tournaments else ["Inconnu"], key=f"comb_tourn_{i}", label_visibility="collapsed", placeholder="Tournoi")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        odds1 = st.text_input(f"Cote {p1 if p1 else 'J1'}", key=f"comb_odds1_{i}", placeholder="1.75")
+                    with col2:
+                        odds2 = st.text_input(f"Cote {p2 if p2 else 'J2'}", key=f"comb_odds2_{i}", placeholder="2.10")
+                    
+                    surface = "Hard"
+                    if tourn and tourn != "Inconnu" and 'surface' in df.columns:
+                        surface_df = df[df['tourney_name'] == tourn]['surface']
+                        if not surface_df.empty:
+                            surface = surface_df.iloc[0]
+                    
+                    if surface in SURFACE_CONFIG:
+                        st.markdown(create_badge(surface, surface.lower()), unsafe_allow_html=True)
+                    
+                    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                    
+                    matches.append({
+                        'player1': p1,
+                        'player2': p2,
+                        'tournament': tourn,
+                        'surface': surface,
+                        'odds1': odds1,
+                        'odds2': odds2,
+                        'stats1': get_player_stats(df, p1, surface) if p1 else None,
+                        'stats2': get_player_stats(df, p2, surface) if p2 else None,
+                        'h2h': get_h2h_stats(df, p1, p2) if p1 and p2 else None
+                    })
+            
+            if st.button("🎯 Générer le meilleur combiné", use_container_width=True):
                 st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
                 
-                matches.append({
-                    'player1': p1,
-                    'player2': p2,
-                    'tournament': tourn,
-                    'surface': surface,
-                    'odds1': odds1,
-                    'odds2': odds2,
-                    'stats1': get_player_stats(df, p1, surface) if p1 else None,
-                    'stats2': get_player_stats(df, p2, surface) if p2 else None,
-                    'h2h': get_h2h_stats(df, p1, p2) if p1 and p2 else None
-                })
-        
-        if st.button("🎯 Générer le meilleur combiné", use_container_width=True):
-            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-            
-            # Calculer les probabilités et edges
-            selections = []
-            
-            for match in matches:
-                if match['player1'] and match['player2'] and match['odds1'] and match['odds2']:
-                    try:
-                        odds1 = float(match['odds1'].replace(',', '.'))
-                        odds2 = float(match['odds2'].replace(',', '.'))
-                        
-                        proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
-                        
-                        # Edge pour chaque joueur
-                        edge1 = proba - 1/odds1
-                        edge2 = (1 - proba) - 1/odds2
-                        
-                        # Sélectionner le meilleur edge positif
-                        if edge1 > 0.02:
-                            selections.append({
-                                'match': f"{match['player1']} vs {match['player2']}",
-                                'joueur': match['player1'],
-                                'proba': proba,
-                                'cote': odds1,
-                                'edge': edge1,
-                                'surface': match['surface']
-                            })
-                        elif edge2 > 0.02:
-                            selections.append({
-                                'match': f"{match['player1']} vs {match['player2']}",
-                                'joueur': match['player2'],
-                                'proba': 1 - proba,
-                                'cote': odds2,
-                                'edge': edge2,
-                                'surface': match['surface']
-                            })
-                    except:
-                        continue
-            
-            if len(selections) >= 2:
-                # Trier par edge
-                selections.sort(key=lambda x: x['edge'], reverse=True)
+                # Calculer les probabilités et edges
+                selections = []
                 
-                # Calculer le combiné
-                proba_combi = 1.0
-                cote_combi = 1.0
+                for match in matches:
+                    if match['player1'] and match['player2'] and match['odds1'] and match['odds2']:
+                        try:
+                            odds1 = float(match['odds1'].replace(',', '.'))
+                            odds2 = float(match['odds2'].replace(',', '.'))
+                            
+                            proba = calculate_probability(match['stats1'], match['stats2'], match['h2h'], match['surface'])
+                            
+                            # Edge pour chaque joueur
+                            edge1 = proba - 1/odds1
+                            edge2 = (1 - proba) - 1/odds2
+                            
+                            # Sélectionner le meilleur edge positif
+                            if edge1 > 0.02:
+                                selections.append({
+                                    'match': f"{match['player1']} vs {match['player2']}",
+                                    'joueur': match['player1'],
+                                    'proba': proba,
+                                    'cote': odds1,
+                                    'edge': edge1,
+                                    'surface': match['surface']
+                                })
+                            elif edge2 > 0.02:
+                                selections.append({
+                                    'match': f"{match['player1']} vs {match['player2']}",
+                                    'joueur': match['player2'],
+                                    'proba': 1 - proba,
+                                    'cote': odds2,
+                                    'edge': edge2,
+                                    'surface': match['surface']
+                                })
+                        except:
+                            continue
                 
-                for sel in selections[:min(5, len(selections))]:
-                    proba_combi *= sel['proba']
-                    cote_combi *= sel['cote']
-                
-                gain = mise * cote_combi
-                esperance = proba_combi * gain - mise
-                kelly = (proba_combi * cote_combi - 1) / (cote_combi - 1) if cote_combi > 1 else 0
-                
-                # Affichage des résultats
-                col1, col2, col3, col4 = st.columns(4)
-                
-                proba_color = COLORS['success'] if proba_combi >= 0.3 else COLORS['warning'] if proba_combi >= 0.15 else COLORS['danger']
-                with col1:
-                    st.markdown(create_metric("Probabilité", f"{proba_combi:.1%}", "", proba_color), unsafe_allow_html=True)
-                
-                with col2:
-                    st.markdown(create_metric("Cote combinée", f"{cote_combi:.2f}"), unsafe_allow_html=True)
-                
-                esp_color = COLORS['success'] if esperance > 0 else COLORS['danger']
-                with col3:
-                    st.markdown(create_metric("Espérance", f"{esperance:+.2f}€", "", esp_color), unsafe_allow_html=True)
-                
-                with col4:
-                    st.markdown(create_metric("Kelly %", f"{kelly*100:.1f}", "%"), unsafe_allow_html=True)
-                
-                # Détail des sélections
-                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-                st.markdown("<h3>📋 Sélections retenues</h3>", unsafe_allow_html=True)
-                
-                for i, sel in enumerate(selections[:min(5, len(selections))], 1):
-                    edge_color = COLORS['success'] if sel['edge'] > 0.05 else COLORS['warning']
-                    st.markdown(f"""
-                    <div style="background: rgba(255,255,255,0.02); border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem;">
-                        <div style="display: flex; align-items: center; gap: 1rem;">
-                            <div style="width: 30px; height: 30px; background: {COLORS['primary']}20; border-radius: 50%; display: flex; align-items: center; justify-content: center;">{i}</div>
-                            <div style="flex: 2;">
-                                <div style="font-weight: 600;">{sel['joueur']}</div>
-                                <div style="font-size: 0.8rem; color: {COLORS['gray']};">{sel['match']}</div>
-                            </div>
-                            <div style="text-align: center; min-width: 80px;">
-                                <div style="font-size: 0.7rem; color: {COLORS['gray']};">PROBA</div>
-                                <div style="font-size: 1.2rem; font-weight: 700; color: {COLORS['primary']};">{sel['proba']:.1%}</div>
-                            </div>
-                            <div style="text-align: center; min-width: 60px;">
-                                <div style="font-size: 0.7rem; color: {COLORS['gray']};">COTE</div>
-                                <div style="font-size: 1.2rem; font-weight: 700;">{sel['cote']:.2f}</div>
-                            </div>
-                            <div style="text-align: center; min-width: 80px;">
-                                <div style="font-size: 0.7rem; color: {COLORS['gray']};">EDGE</div>
-                                <div style="font-size: 1.2rem; font-weight: 700; color: {edge_color};">{sel['edge']*100:+.1f}%</div>
+                if len(selections) >= 2:
+                    # Trier par edge
+                    selections.sort(key=lambda x: x['edge'], reverse=True)
+                    
+                    # Calculer le combiné
+                    proba_combi = 1.0
+                    cote_combi = 1.0
+                    
+                    for sel in selections[:min(5, len(selections))]:
+                        proba_combi *= sel['proba']
+                        cote_combi *= sel['cote']
+                    
+                    gain = mise * cote_combi
+                    esperance = proba_combi * gain - mise
+                    kelly = (proba_combi * cote_combi - 1) / (cote_combi - 1) if cote_combi > 1 else 0
+                    
+                    # Affichage des résultats
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    proba_color = COLORS['success'] if proba_combi >= 0.3 else COLORS['warning'] if proba_combi >= 0.15 else COLORS['danger']
+                    with col1:
+                        st.markdown(create_metric("Probabilité", f"{proba_combi:.1%}", "", proba_color), unsafe_allow_html=True)
+                    
+                    with col2:
+                        st.markdown(create_metric("Cote combinée", f"{cote_combi:.2f}"), unsafe_allow_html=True)
+                    
+                    esp_color = COLORS['success'] if esperance > 0 else COLORS['danger']
+                    with col3:
+                        st.markdown(create_metric("Espérance", f"{esperance:+.2f}€", "", esp_color), unsafe_allow_html=True)
+                    
+                    with col4:
+                        st.markdown(create_metric("Kelly %", f"{kelly*100:.1f}", "%"), unsafe_allow_html=True)
+                    
+                    # Détail des sélections
+                    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                    st.markdown("<h3>📋 Sélections retenues</h3>", unsafe_allow_html=True)
+                    
+                    for i, sel in enumerate(selections[:min(5, len(selections))], 1):
+                        edge_color = COLORS['success'] if sel['edge'] > 0.05 else COLORS['warning']
+                        st.markdown(f"""
+                        <div style="background: rgba(255,255,255,0.02); border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem;">
+                            <div style="display: flex; align-items: center; gap: 1rem;">
+                                <div style="width: 30px; height: 30px; background: {COLORS['primary']}20; border-radius: 50%; display: flex; align-items: center; justify-content: center;">{i}</div>
+                                <div style="flex: 2;">
+                                    <div style="font-weight: 600;">{sel['joueur']}</div>
+                                    <div style="font-size: 0.8rem; color: {COLORS['gray']};">{sel['match']}</div>
+                                </div>
+                                <div style="text-align: center; min-width: 80px;">
+                                    <div style="font-size: 0.7rem; color: {COLORS['gray']};">PROBA</div>
+                                    <div style="font-size: 1.2rem; font-weight: 700; color: {COLORS['primary']};">{sel['proba']:.1%}</div>
+                                </div>
+                                <div style="text-align: center; min-width: 60px;">
+                                    <div style="font-size: 0.7rem; color: {COLORS['gray']};">COTE</div>
+                                    <div style="font-size: 1.2rem; font-weight: 700;">{sel['cote']:.2f}</div>
+                                </div>
+                                <div style="text-align: center; min-width: 80px;">
+                                    <div style="font-size: 0.7rem; color: {COLORS['gray']};">EDGE</div>
+                                    <div style="font-size: 1.2rem; font-weight: 700; color: {edge_color};">{sel['edge']*100:+.1f}%</div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Sauvegarde
-                combine_data = {
-                    'selections': selections[:min(5, len(selections))],
-                    'proba_globale': proba_combi,
-                    'cote_globale': cote_combi,
-                    'mise': mise,
-                    'gain_potentiel': gain,
-                    'esperance': esperance,
-                    'kelly': kelly,
-                    'nb_matches': len(selections[:min(5, len(selections))])
-                }
-                
-                if save_combine(combine_data):
-                    st.success("Combiné sauvegardé dans l'historique !")
-                
-                # Analyses IA
-                if use_ai and GROQ_AVAILABLE:
-                    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-                    st.markdown("<h3>🤖 Analyse du combiné</h3>", unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
                     
-                    prompt = f"Analyse ce combiné de {len(selections[:min(5, len(selections))])} matchs avec une probabilité globale de {proba_combi:.1%} et une cote de {cote_combi:.2f}. Donne un avis sur sa pertinence et les risques."
+                    # Sauvegarde
+                    combine_data = {
+                        'selections': selections[:min(5, len(selections))],
+                        'proba_globale': proba_combi,
+                        'cote_globale': cote_combi,
+                        'mise': mise,
+                        'gain_potentiel': gain,
+                        'esperance': esperance,
+                        'kelly': kelly,
+                        'nb_matches': len(selections[:min(5, len(selections))])
+                    }
                     
-                    with st.spinner("Analyse en cours..."):
-                        analysis = call_groq_api(prompt)
+                    if save_combine(combine_data):
+                        st.success("Combiné sauvegardé dans l'historique !")
                     
-                    if analysis:
-                        st.markdown(f"<div class='card'>{analysis}</div>", unsafe_allow_html=True)
-            else:
-                st.warning("Pas assez de sélections valides avec edge positif. Vérifie tes cotes.")
+                    # Analyses IA
+                    if use_ai and GROQ_AVAILABLE:
+                        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+                        st.markdown("<h3>🤖 Analyse du combiné</h3>", unsafe_allow_html=True)
+                        
+                        prompt = f"Analyse ce combiné de {len(selections[:min(5, len(selections))])} matchs avec une probabilité globale de {proba_combi:.1%} et une cote de {cote_combi:.2f}. Donne un avis sur sa pertinence et les risques."
+                        
+                        with st.spinner("Analyse en cours..."):
+                            analysis = call_groq_api(prompt)
+                        
+                        if analysis:
+                            st.markdown(f"<div class='card'>{analysis}</div>", unsafe_allow_html=True)
+                else:
+                    st.warning("Pas assez de sélections valides avec edge positif. Vérifie tes cotes.")
 
 # ─────────────────────────────────────────────────────────────
 # HISTORIQUE
@@ -1934,14 +1818,17 @@ def show_history():
             if filter_circuit != "Tous":
                 filtered = [h for h in filtered if h.get('circuit') == filter_circuit]
             if search:
-                filtered = [h for h in filtered if search.lower() in h['player1'].lower() or search.lower() in h['player2'].lower()]
+                filtered = [h for h in filtered if search.lower() in h.get('player1', '').lower() or search.lower() in h.get('player2', '').lower()]
             
             # Inverser pour avoir les plus récents en premier
             filtered.reverse()
             
             # Afficher
             for i, pred in enumerate(filtered):
-                with st.expander(f"{pred.get('date', 'Date inconnue')[:16]} - {pred['player1']} vs {pred['player2']}", expanded=i==0):
+                date_str = pred.get('date', 'Date inconnue')[:16]
+                player1 = pred.get('player1', 'Inconnu')
+                player2 = pred.get('player2', 'Inconnu')
+                with st.expander(f"{date_str} - {player1} vs {player2}", expanded=i==0):
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
@@ -1951,11 +1838,14 @@ def show_history():
                         st.markdown(create_metric("Surface", pred.get('surface', '—')), unsafe_allow_html=True)
                     
                     with col3:
-                        st.markdown(create_metric("Probabilité", f"{pred.get('proba', 0):.1%}"), unsafe_allow_html=True)
+                        proba = pred.get('proba', 0)
+                        st.markdown(create_metric("Probabilité", f"{proba:.1%}" if isinstance(proba, (int, float)) else str(proba)), unsafe_allow_html=True)
                     
                     with col4:
-                        conf_color = COLORS['success'] if pred.get('confidence', 0) >= 70 else COLORS['warning'] if pred.get('confidence', 0) >= 50 else COLORS['danger']
-                        st.markdown(create_metric("Confiance", f"{pred.get('confidence', 0):.0f}", "/100", conf_color), unsafe_allow_html=True)
+                        confidence = pred.get('confidence', 0)
+                        if isinstance(confidence, (int, float)):
+                            conf_color = COLORS['success'] if confidence >= 70 else COLORS['warning'] if confidence >= 50 else COLORS['danger']
+                            st.markdown(create_metric("Confiance", f"{confidence:.0f}", "/100", conf_color), unsafe_allow_html=True)
         else:
             st.info("Aucune prédiction dans l'historique")
     
@@ -1964,33 +1854,39 @@ def show_history():
         
         if combines:
             for i, comb in enumerate(combines):
+                date_str = comb.get('date', 'Date inconnue')[:16]
+                nb_matches = comb.get('nb_matches', 0)
                 proba = comb.get('proba_globale', 0)
-                cote = comb.get('cote_globale', 0)
-                esperance = comb.get('esperance', 0)
                 
-                proba_color = COLORS['success'] if proba >= 0.3 else COLORS['warning'] if proba >= 0.15 else COLORS['danger']
-                esp_color = COLORS['success'] if esperance > 0 else COLORS['danger']
-                
-                with st.expander(f"{comb.get('date', 'Date inconnue')[:16]} - {comb.get('nb_matches', 0)} matchs - Proba {proba:.1%}", expanded=i==0):
+                with st.expander(f"{date_str} - {nb_matches} matchs - Proba {proba:.1%}", expanded=i==0):
+                    cote = comb.get('cote_globale', 0)
+                    esperance = comb.get('esperance', 0)
+                    kelly = comb.get('kelly', 0)
+                    
                     col1, col2, col3, col4 = st.columns(4)
                     
+                    proba_color = COLORS['success'] if proba >= 0.3 else COLORS['warning'] if proba >= 0.15 else COLORS['danger']
                     with col1:
                         st.markdown(create_metric("Probabilité", f"{proba:.1%}", "", proba_color), unsafe_allow_html=True)
                     
                     with col2:
                         st.markdown(create_metric("Cote", f"{cote:.2f}"), unsafe_allow_html=True)
                     
+                    esp_color = COLORS['success'] if esperance > 0 else COLORS['danger']
                     with col3:
                         st.markdown(create_metric("Espérance", f"{esperance:+.2f}€", "", esp_color), unsafe_allow_html=True)
                     
                     with col4:
-                        st.markdown(create_metric("Kelly", f"{comb.get('kelly', 0)*100:.1f}", "%"), unsafe_allow_html=True)
+                        st.markdown(create_metric("Kelly", f"{kelly*100:.1f}", "%"), unsafe_allow_html=True)
                     
                     # Détail des sélections
-                    if 'selections' in comb:
+                    if 'selections' in comb and comb['selections']:
                         st.markdown("**Sélections:**")
                         for sel in comb['selections']:
-                            st.markdown(f"- {sel['joueur']} ({sel['proba']:.1%}) @ {sel['cote']:.2f}")
+                            joueur = sel.get('joueur', 'Inconnu')
+                            proba_sel = sel.get('proba', 0)
+                            cote_sel = sel.get('cote', 0)
+                            st.markdown(f"- {joueur} ({proba_sel:.1%}) @ {cote_sel:.2f}")
         else:
             st.info("Aucun combiné dans l'historique")
 
@@ -2050,79 +1946,17 @@ def show_statistics():
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # Graphiques
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("<h3>📊 Précision par surface</h3>", unsafe_allow_html=True)
+    # Graphiques simples avec st.bar_chart
+    if history:
+        st.markdown("<h3>📊 Évolution des prédictions</h3>", unsafe_allow_html=True)
         
-        if history:
-            surface_stats = {}
-            for pred in history:
-                if 'result' in pred and pred['result'] is not None:
-                    surface = pred.get('surface', 'Inconnue')
-                    if surface not in surface_stats:
-                        surface_stats[surface] = {'total': 0, 'correct': 0}
-                    surface_stats[surface]['total'] += 1
-                    if pred['result'] == pred.get('favori'):
-                        surface_stats[surface]['correct'] += 1
-            
-            if surface_stats:
-                df_surface = pd.DataFrame([
-                    {'Surface': s, 'Précision': (v['correct']/v['total'])*100}
-                    for s, v in surface_stats.items()
-                ])
-                
-                fig = px.bar(
-                    df_surface,
-                    x='Surface',
-                    y='Précision',
-                    color='Surface',
-                    color_discrete_map={
-                        'Hard': COLORS['surface_hard'],
-                        'Clay': COLORS['surface_clay'],
-                        'Grass': COLORS['surface_grass']
-                    }
-                )
-                fig.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font_color='white',
-                    showlegend=False
-                )
-                st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        st.markdown("<h3>📈 Évolution de la bankroll</h3>", unsafe_allow_html=True)
-        
-        if combines:
-            cumul = []
-            balance = 0
-            for comb in combines:
-                if 'resultat' in comb and comb['resultat'] == 'gagné':
-                    balance += comb.get('gain_potentiel', 0) - comb.get('mise', 0)
-                elif 'resultat' in comb and comb['resultat'] == 'perdu':
-                    balance -= comb.get('mise', 0)
-                cumul.append(balance)
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                y=cumul,
-                mode='lines+markers',
-                name='Bankroll',
-                line=dict(color=COLORS['primary'], width=3),
-                fill='tozeroy',
-                fillcolor=f"rgba(0, 223, 162, 0.1)"
-            ))
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font_color='white',
-                xaxis_title="Combinés",
-                yaxis_title="Profit (€)",
-                showlegend=False
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        # Compter les prédictions par mois
+        df_history = pd.DataFrame(history)
+        if 'date' in df_history.columns:
+            df_history['date'] = pd.to_datetime(df_history['date'])
+            df_history['mois'] = df_history['date'].dt.to_period('M').astype(str)
+            monthly_counts = df_history['mois'].value_counts().sort_index()
+            st.line_chart(monthly_counts)
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -2142,9 +1976,6 @@ def show_configuration():
         
         # Année de début
         start_year = st.number_input("Année de début", min_value=2000, max_value=2024, value=START_YEAR)
-        
-        # TTL cache
-        cache_ttl = st.slider("Durée du cache (heures)", min_value=1, max_value=24, value=6)
     
     with col2:
         st.markdown("### 🤖 Intelligence Artificielle")
@@ -2155,9 +1986,6 @@ def show_configuration():
         
         if not get_groq_key():
             st.info("Pour activer les analyses IA, ajoute ta clé API Groq dans les secrets Streamlit ou en variable d'environnement.")
-        
-        # Modèle IA
-        ai_model = st.selectbox("Modèle IA", ["Llama 3.3 70B", "Mixtral 8x7B", "Gemma 2 9B"], disabled=not get_groq_key())
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
