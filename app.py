@@ -2653,113 +2653,116 @@ with tab_hist:
 
         # ── Liste des prédictions (plus récentes en premier) ──
         for i, h in enumerate(reversed(filtered)):
-            real_idx = len(history) - 1 - history.index(h) if h in history else i
             result_h   = h.get("result")
-            favori_h   = h.get("favori","—")
-            is_correct = result_h == favori_h
+            favori_h   = h.get("favori", "—")
+            is_correct = bool(result_h) and result_h == favori_h
             is_pending = not result_h
 
-            date_str = h.get("date","")[:16].replace("T"," ")
-            p1 = h.get("j1","—"); p2 = h.get("j2","—")
-            proba_h = h.get("proba_j1", 0.5)
-            conf_h  = h.get("confidence", 0)
-            surf_h  = h.get("surface","—")
-            tourn_h = h.get("tournament","—")
-            odds_h1 = h.get("odds_j1")
-            odds_h2 = h.get("odds_j2")
+            date_str = h.get("date", "")[:16].replace("T", " ")
+            p1       = h.get("j1", "—")
+            p2       = h.get("j2", "—")
+            proba_h  = float(h.get("proba_j1", 0.5))
+            conf_h   = int(h.get("confidence", 0))
+            surf_h   = h.get("surface", "—")
+            tourn_h  = h.get("tournament", "—")
+            odds_h1  = h.get("odds_j1")
+            odds_h2  = h.get("odds_j2")
 
-            # Couleur statut
-            if is_pending:
-                status_color = "#4a5e60"; status_icon = "⏳"; status_txt = "En attente"
-            elif is_correct:
-                status_color = "#3dd68c"; status_icon = "✅"; status_txt = "Correct"
-            else:
-                status_color = "#e07878"; status_icon = "❌"; status_txt = "Incorrect"
+            status_icon  = "⏳" if is_pending else ("✅" if is_correct else "❌")
+            status_txt   = "En attente" if is_pending else ("Correct" if is_correct else "Incorrect")
+            status_color = "#4a5e60" if is_pending else ("#3dd68c" if is_correct else "#e07878")
+            conf_color_h = "#3dd68c" if conf_h >= 70 else ("#f5c842" if conf_h >= 45 else "#e07878")
+            surf_color   = {"Hard": "#4a90d9", "Clay": "#c8703a", "Grass": "#3dd68c"}.get(surf_h, "#4a5e60")
 
-            conf_color_h = "#3dd68c" if conf_h>=70 else "#f5c842" if conf_h>=45 else "#e07878"
-
-            # Badge surface
-            surf_cls = {"Hard":"badge-hard","Clay":"badge-clay","Grass":"badge-grass"}.get(surf_h,"badge-hard")
+            # Value bet calcul
+            vb_txt = ""
+            if odds_h1 and odds_h2:
+                try:
+                    e1 = proba_h - 1/float(odds_h1)
+                    e2 = (1-proba_h) - 1/float(odds_h2)
+                    be, bp = (e1, p1) if abs(e1) >= abs(e2) else (e2, p2)
+                    vb_txt = ("✅ VALUE " if be > 0.04 else "❌ No value ") + f"{bp} · edge {be*100:+.1f}%"
+                except Exception:
+                    pass
 
             with st.container():
-                # Construire la section cotes séparément pour éviter l'expression conditionnelle dans f-string
-                cotes_html = ""
-                if odds_h1:
-                    cotes_html = f"""
-                        <div style="flex:1; text-align:center; min-width:80px;">
-                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">COTES</div>
-                            <div style="font-size:0.82rem; color:#c8c0b0;">{odds_h1} / {odds_h2}</div>
-                        </div>"""
+                # ── Ligne principale : colonnes natives Streamlit ──
+                hc1, hc2, hc3, hc4, hc5 = st.columns([4, 1, 1, 1, 1])
 
-                # Value bet HTML si cotes disponibles
-                vb_html = ""
-                if odds_h1 and odds_h2:
-                    try:
-                        impl_h1 = 1 / float(odds_h1)
-                        impl_h2 = 1 / float(odds_h2)
-                        edge_h1 = proba_h - impl_h1
-                        edge_h2 = (1-proba_h) - impl_h2
-                        best_edge = edge_h1 if abs(edge_h1) >= abs(edge_h2) else edge_h2
-                        best_player = p1 if abs(edge_h1) >= abs(edge_h2) else p2
-                        ec = "#3dd68c" if best_edge > 0.04 else "#e07878" if best_edge < -0.04 else "#f5c842"
-                        vb_icon = "✅ VALUE" if best_edge > 0.04 else "❌ No value"
-                        vb_html = f'<div style="font-size:0.68rem; color:{ec}; margin-top:6px;">{vb_icon} {best_player} · edge {best_edge*100:+.1f}%</div>'
-                    except Exception:
-                        pass
+                with hc1:
+                    st.markdown(
+                        f'<div style="font-size:0.62rem; color:#4a5e60; letter-spacing:1px; margin-bottom:2px;">'
+                        f'{date_str} · {tourn_h}</div>'
+                        f'<div style="font-size:1rem; font-weight:700; color:#e8e0d0; margin-bottom:4px;">'
+                        f'{p1} <span style="color:#3dd68c; font-size:0.8rem;"> vs </span> {p2}</div>'
+                        f'<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">'
+                        f'<span style="background:{surf_color}22; color:{surf_color}; border:1px solid {surf_color}44;'
+                        f' padding:2px 8px; border-radius:20px; font-size:0.62rem;">{surf_h}</span>'
+                        f'<span style="font-size:0.72rem; color:#4a5e60;">Favori : '
+                        f'<span style="color:#c8c0b0;">{favori_h}</span></span></div>'
+                        + (f'<div style="font-size:0.68rem; color:{"#3dd68c" if "VALUE" in vb_txt else "#e07878"}; margin-top:4px;">{vb_txt}</div>' if vb_txt else ""),
+                        unsafe_allow_html=True
+                    )
 
-                st.markdown(f"""
-                <div class="card" style="margin-bottom:4px; border-color:{status_color}33; padding:16px 20px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                with hc2:
+                    st.markdown(
+                        f'<div style="text-align:center;">'
+                        f'<div style="font-size:0.58rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:2px;">PROBA</div>'
+                        f'<div style="font-size:1.3rem; font-weight:700; color:#e8e0d0;">{proba_h:.0%}</div>'
+                        f'<div style="font-size:0.6rem; color:#4a5e60; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{p1.split()[-1]}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
 
-                        <div style="flex:3; min-width:200px;">
-                            <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">
-                                {date_str} · {tourn_h}
-                            </div>
-                            <div style="font-family:'Playfair Display',serif; font-size:1rem; font-weight:700; color:#e8e0d0; margin-bottom:4px;">
-                                {p1} <span style="color:#3dd68c; margin:0 8px; font-size:0.85rem;">vs</span> {p2}
-                            </div>
-                            <div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
-                                <span class="badge {surf_cls}" style="font-size:0.62rem;">{surf_h}</span>
-                                <span style="font-size:0.72rem; color:#4a5e60;">
-                                    Favori : <span style="color:#c8c0b0;">{favori_h}</span>
-                                </span>
-                            </div>
-                            {vb_html}
-                        </div>
+                with hc3:
+                    st.markdown(
+                        f'<div style="text-align:center;">'
+                        f'<div style="font-size:0.58rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:2px;">CONF.</div>'
+                        f'<div style="font-size:1.3rem; font-weight:700; color:{conf_color_h};">{conf_h}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
 
-                        <div style="flex:1; text-align:center; min-width:72px;">
-                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">PROBA</div>
-                            <div style="font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:#e8e0d0;">{proba_h:.0%}</div>
-                            <div style="font-size:0.62rem; color:#4a5e60;">{p1}</div>
-                        </div>
+                with hc4:
+                    if odds_h1 and odds_h2:
+                        st.markdown(
+                            f'<div style="text-align:center;">'
+                            f'<div style="font-size:0.58rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:2px;">COTES</div>'
+                            f'<div style="font-size:0.88rem; font-weight:600; color:#c8c0b0;">{odds_h1}</div>'
+                            f'<div style="font-size:0.88rem; font-weight:600; color:#c8c0b0;">{odds_h2}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.markdown(
+                            '<div style="text-align:center; color:#2a3e40; font-size:0.75rem; padding-top:12px;">—</div>',
+                            unsafe_allow_html=True
+                        )
 
-                        <div style="flex:1; text-align:center; min-width:72px;">
-                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">CONF.</div>
-                            <div style="font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:{conf_color_h};">{conf_h}</div>
-                        </div>
+                with hc5:
+                    st.markdown(
+                        f'<div style="text-align:center;">'
+                        f'<div style="font-size:0.58rem; color:#4a5e60; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">RÉSULTAT</div>'
+                        f'<div style="font-size:1rem; font-weight:700; color:{status_color};">{status_icon}</div>'
+                        f'<div style="font-size:0.65rem; color:{status_color};">{status_txt}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
 
-                        {cotes_html}
-
-                        <div style="flex:1; text-align:center; min-width:80px;">
-                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">RÉSULTAT</div>
-                            <div style="font-size:1rem; font-weight:700; color:{status_color};">{status_icon} {status_txt}</div>
-                        </div>
-
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # ── Renseigner le résultat si en attente ─────
+                # ── Boutons résultat ───────────────────────────
                 if is_pending:
-                    rc1, rc2, rc3 = st.columns([2, 2, 3])
-                    with rc1:
+                    rb1, rb2, rb3 = st.columns([2, 2, 3])
+                    with rb1:
                         if st.button(f"✅ {p1} a gagné", key=f"hist_res_j1_{i}"):
-                            update_result(len(history)-1-i, p1)
+                            update_result(len(history) - 1 - i, p1)
                             st.rerun()
-                    with rc2:
+                    with rb2:
                         if st.button(f"✅ {p2} a gagné", key=f"hist_res_j2_{i}"):
-                            update_result(len(history)-1-i, p2)
+                            update_result(len(history) - 1 - i, p2)
                             st.rerun()
+
+                st.markdown('<div style="border-top:1px solid #1a2a2c; margin:8px 0 12px 0;"></div>',
+                            unsafe_allow_html=True)
 
         # ── Export CSV ────────────────────────────────────
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
