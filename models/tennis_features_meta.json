@@ -38,16 +38,22 @@
   ],
   "results": {
     "atp_Hard": {
-      "accuracy": 0.6210597157478333,
-      "auc": 0.6764920949935913,
+      "accuracy": 0.6740442655935613,
+      "auc": 0.7343730320096442,
+      "brier": 0.20663751972959485,
+      "n_train": 5961,
+      "n_test": 1491,
       "last_finetuned": "2026-02-25",
-      "samples": 7452
+      "status": "finetuned"
     },
     "atp_Clay": {
-      "accuracy": 0.6064981818199158,
-      "auc": 0.6363499760627747,
+      "accuracy": 0.6588447653429603,
+      "auc": 0.7079982796595811,
+      "brier": 0.21610294868518226,
+      "n_train": 2214,
+      "n_test": 554,
       "last_finetuned": "2026-02-25",
-      "samples": 2768
+      "status": "finetuned"
     },
     "atp_Grass": {
       "accuracy": 0.6240255236625671,
