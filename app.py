@@ -26,31 +26,14 @@ try:
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
-    # Fallback avec requests si python-telegram-bot n'est pas installé
-    def send_telegram_message_requests(message, parse_mode='HTML'):
-        token, chat_id = get_telegram_config()
-        if not token or not chat_id:
-            return False
-        try:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {
-                'chat_id': chat_id,
-                'text': message,
-                'parse_mode': parse_mode,
-                'disable_web_page_preview': True
-            }
-            response = requests.post(url, json=payload, timeout=10)
-            return response.status_code == 200
-        except:
-            return False
 
 def get_telegram_config():
     """Récupère la config Telegram depuis les secrets Streamlit"""
     try:
         token = st.secrets["TELEGRAM_BOT_TOKEN"]
         chat_id = st.secrets["TELEGRAM_CHAT_ID"]
-        return token, chat_id
-    except:
+        return token, str(chat_id)
+    except Exception as e:
         token = os.environ.get("TELEGRAM_BOT_TOKEN")
         chat_id = os.environ.get("TELEGRAM_CHAT_ID")
         if token and chat_id:
@@ -74,8 +57,26 @@ async def send_telegram_message_async(message, parse_mode='HTML'):
         print(f"Erreur Telegram: {e}")
         return False
 
+def send_telegram_message_requests(message, parse_mode='HTML'):
+    """Envoie un message Telegram via requests (fallback)"""
+    token, chat_id = get_telegram_config()
+    if not token or not chat_id:
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': parse_mode,
+            'disable_web_page_preview': True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Erreur Telegram requests: {e}")
+        return False
+
 def send_telegram_message(message, parse_mode='HTML'):
-    # Essayer d'abord avec la bibliothèque telegram
     if TELEGRAM_AVAILABLE:
         try:
             loop = asyncio.new_event_loop()
@@ -86,9 +87,7 @@ def send_telegram_message(message, parse_mode='HTML'):
                 return True
         except:
             pass
-    
-    # Fallback avec requests
-    return send_telegram_message_requests(message, parse_mode) if 'send_telegram_message_requests' in dir() else False
+    return send_telegram_message_requests(message, parse_mode)
 
 def format_prediction_message(pred_data, ai_comment=None):
     emoji_map = {'Hard': '🟦', 'Clay': '🟧', 'Grass': '🟩'}
@@ -252,7 +251,7 @@ def send_custom_message():
                 st.error("❌ Échec de l'envoi. Vérifie la configuration Telegram.")
 
 # ─────────────────────────────────────────────────────────────
-# GROQ API (CORRECTION)
+# GROQ API
 # ─────────────────────────────────────────────────────────────
 try:
     from groq import Groq
@@ -618,36 +617,40 @@ def load_history():
     try:
         with open(HIST_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except: 
+    except json.JSONDecodeError:
+        return []
+    except Exception as e:
+        print(f"Erreur chargement historique: {e}")
         return []
 
 def save_prediction(pred_data):
-    history = load_history()
-    if 'date' not in pred_data:
-        pred_data['date'] = datetime.now().isoformat()
-    pred_data['statut'] = 'en_attente'
-    pred_data['id'] = hashlib.md5(f"{pred_data['date']}{pred_data.get('player1','')}{pred_data.get('player2','')}".encode()).hexdigest()[:8]
-    history.append(pred_data)
-    if len(history) > 1000: 
-        history = history[-1000:]
     try:
+        history = load_history()
+        if 'id' not in pred_data:
+            pred_data['id'] = hashlib.md5(
+                f"{pred_data.get('date', datetime.now().isoformat())}{pred_data.get('player1','')}{pred_data.get('player2','')}".encode()
+            ).hexdigest()[:8]
+        history.append(pred_data)
+        if len(history) > 1000:
+            history = history[-1000:]
         with open(HIST_FILE, 'w', encoding='utf-8') as f:
-            json.dump(history, f, indent=2)
+            json.dump(history, f, indent=2, ensure_ascii=False)
         return True
-    except: 
+    except Exception as e:
+        print(f"Erreur sauvegarde: {e}")
         return False
 
 def update_prediction_status(pred_id, statut):
-    history = load_history()
-    for pred in history:
-        if pred.get('id') == pred_id:
-            pred['statut'] = statut
-            break
     try:
+        history = load_history()
+        for pred in history:
+            if pred.get('id') == pred_id:
+                pred['statut'] = statut
+                break
         with open(HIST_FILE, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2)
         return True
-    except: 
+    except:
         return False
 
 def load_combines():
@@ -660,18 +663,18 @@ def load_combines():
         return []
 
 def save_combine(combine_data):
-    combines = load_combines()
-    combine_data['date'] = datetime.now().isoformat()
-    combine_data['statut'] = 'en_attente'
-    combine_data['id'] = hashlib.md5(f"{combine_data['date']}{len(combines)}".encode()).hexdigest()[:8]
-    combines.append(combine_data)
-    if len(combines) > 200: 
-        combines = combines[-200:]
     try:
+        combines = load_combines()
+        combine_data['date'] = datetime.now().isoformat()
+        combine_data['statut'] = 'en_attente'
+        combine_data['id'] = hashlib.md5(f"{combine_data['date']}{len(combines)}".encode()).hexdigest()[:8]
+        combines.append(combine_data)
+        if len(combines) > 200: 
+            combines = combines[-200:]
         with open(COMB_HIST_FILE, 'w', encoding='utf-8') as f:
             json.dump(combines, f, indent=2)
         return True
-    except: 
+    except:
         return False
 
 def load_user_stats():
@@ -779,7 +782,11 @@ def show_predictions(atp_data):
     col1, col2 = st.columns(2)
     player1 = player2 = tournament = None
     surface = "Hard"
-    odds1 = odds2 = ""
+    
+    if 'pred_odds1' not in st.session_state:
+        st.session_state.pred_odds1 = ""
+    if 'pred_odds2' not in st.session_state:
+        st.session_state.pred_odds2 = ""
     
     with col1:
         if not atp_data.empty:
@@ -802,8 +809,11 @@ def show_predictions(atp_data):
                                 surface = surface_df.iloc[0]
                     
                     with st.expander("📊 Cotes bookmaker (optionnel)"):
-                        odds1 = st.text_input(f"Cote {player1}", key="pred_odds1", placeholder="1.75")
-                        odds2 = st.text_input(f"Cote {player2}", key="pred_odds2", placeholder="2.10") if player2 else st.text_input("Cote J2", key="pred_odds2", placeholder="2.10")
+                        odds1 = st.text_input(f"Cote {player1}", key="pred_odds1", placeholder="1.75", value=st.session_state.pred_odds1)
+                        odds2 = st.text_input(f"Cote {player2}", key="pred_odds2", placeholder="2.10", value=st.session_state.pred_odds2) if player2 else st.text_input("Cote J2", key="pred_odds2", placeholder="2.10", value=st.session_state.pred_odds2)
+                        
+                        st.session_state.pred_odds1 = odds1
+                        st.session_state.pred_odds2 = odds2
                     
                     if surface in SURFACE_CONFIG:
                         st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
@@ -817,18 +827,21 @@ def show_predictions(atp_data):
             confidence = calculate_confidence(proba, p1, p2, h2h)
             
             best_value = None
-            if odds1 and odds2:
+            odds1_val = st.session_state.get('pred_odds1', '')
+            odds2_val = st.session_state.get('pred_odds2', '')
+            
+            if odds1_val and odds2_val:
                 try:
-                    o1 = float(odds1.replace(',', '.'))
-                    o2 = float(odds2.replace(',', '.'))
+                    o1 = float(odds1_val.replace(',', '.'))
+                    o2 = float(odds2_val.replace(',', '.'))
                     edge1 = proba - 1/o1
                     edge2 = (1 - proba) - 1/o2
                     if edge1 > edge2 and edge1 > MIN_EDGE_COMBINE:
                         best_value = {'joueur': p1, 'edge': edge1, 'cote': o1, 'proba': proba}
                     elif edge2 > edge1 and edge2 > MIN_EDGE_COMBINE:
                         best_value = {'joueur': p2, 'edge': edge2, 'cote': o2, 'proba': 1 - proba}
-                except: 
-                    pass
+                except Exception as e:
+                    st.error(f"Erreur de conversion des cotes: {e}")
             
             favori = p1 if proba >= 0.5 else p2
             
@@ -856,24 +869,32 @@ def show_predictions(atp_data):
             
             if st.button("💾 Sauvegarder", key="pred_save", use_container_width=True):
                 pred_data = {
-                    'player1': p1, 'player2': p2,
-                    'tournament': tournament or "Inconnu",
+                    'player1': p1,
+                    'player2': p2,
+                    'tournament': tournament if tournament else "Inconnu",
                     'surface': surface,
-                    'proba': proba, 'confidence': confidence,
-                    'odds1': odds1 if odds1 else None,
-                    'odds2': odds2 if odds2 else None,
-                    'favori_modele': favori, 'best_value': best_value,
+                    'proba': float(proba),
+                    'confidence': float(confidence),
+                    'odds1': odds1_val if odds1_val else None,
+                    'odds2': odds2_val if odds2_val else None,
+                    'favori_modele': favori,
+                    'best_value': best_value,
+                    'date': datetime.now().isoformat(),
+                    'statut': 'en_attente'
                 }
+                
                 if save_prediction(pred_data):
-                    st.success("✅ Sauvegardé !")
+                    st.success("✅ Prédiction sauvegardée dans l'historique !")
+                    
                     if send_tg:
-                        ai_comment = st.session_state.get('last_ai') if send_ai else None
-                        if send_prediction_to_telegram(pred_data, ai_comment):
-                            st.success("📱 Envoyé sur Telegram !")
-                        else:
-                            st.error("❌ Échec de l'envoi Telegram. Vérifie la configuration.")
+                        with st.spinner("📤 Envoi sur Telegram..."):
+                            ai_comment = st.session_state.get('last_ai') if send_ai else None
+                            if send_prediction_to_telegram(pred_data, ai_comment):
+                                st.success("📱 Prédiction envoyée sur Telegram !")
+                            else:
+                                st.error("❌ Échec de l'envoi Telegram. Vérifie la configuration.")
                 else:
-                    st.error("❌ Erreur lors de la sauvegarde")
+                    st.error("❌ Erreur lors de la sauvegarde dans l'historique")
 
 # ─────────────────────────────────────────────────────────────
 # MULTI-MATCHS
@@ -939,9 +960,6 @@ def show_multimatches(atp_data):
     
     if st.button(f"🔍 Analyser", key="mm_analyze", use_container_width=True):
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        results = []
-        progress = st.progress(0)
-        
         valid_matches = [m for m in matches if m['player1'] and m['player2']]
         
         if not valid_matches:
@@ -974,6 +992,8 @@ def show_multimatches(atp_data):
                 'odds1': match['odds1'], 'odds2': match['odds2'],
                 'favori_modele': match['player1'] if proba >= 0.5 else match['player2'],
                 'best_value': best_value,
+                'date': datetime.now().isoformat(),
+                'statut': 'en_attente'
             }
             
             st.markdown(f"### Match {i+1}: {match['player1']} vs {match['player2']}")
@@ -993,10 +1013,8 @@ def show_multimatches(atp_data):
                         if send_all:
                             send_prediction_to_telegram(pred_data, ai)
             
-            results.append(pred_data)
-            progress.progress((i + 1) / len(valid_matches))
-        
-        progress.empty()
+            if save_prediction(pred_data):
+                st.success(f"✅ Match {i+1} sauvegardé !")
 
 # ─────────────────────────────────────────────────────────────
 # COMBINÉS
@@ -1226,18 +1244,6 @@ def show_telegram():
     token, chat_id = get_telegram_config()
     if not token or not chat_id:
         st.warning("⚠️ Telegram non configuré. Ajoute les secrets TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID")
-        st.markdown("""
-        **Configuration rapide:**
-        1. Va sur Telegram, cherche @BotFather
-        2. Envoie `/newbot` et suis les instructions
-        3. Copie le token donné
-        4. Cherche @userinfobot pour obtenir ton chat_id
-        5. Ajoute dans les secrets:
-        ```toml
-        TELEGRAM_BOT_TOKEN = "ton_token"
-        TELEGRAM_CHAT_ID = "ton_chat_id"
-        ```
-        """)
         return
     
     st.success(f"✅ Telegram configuré (Chat ID: {chat_id})")
@@ -1253,7 +1259,7 @@ def show_telegram():
                 if send_stats_to_telegram():
                     st.success("✅ Stats envoyées !")
                 else:
-                    st.error("❌ Échec de l'envoi. Vérifie la configuration.")
+                    st.error("❌ Échec de l'envoi")
     
     with tab3:
         if st.button("🔧 Tester la connexion", key="tg_test", use_container_width=True):
@@ -1273,8 +1279,6 @@ def show_configuration():
     st.markdown("### 🤖 Intelligence Artificielle")
     groq_status = "✅ Connecté" if get_groq_key() else "❌ Non configuré"
     st.markdown(f"**Groq API:** {groq_status}")
-    if not get_groq_key():
-        st.info("Pour activer l'IA, ajoute GROQ_API_KEY dans les secrets")
     
     st.markdown("### 📱 Telegram")
     token, chat_id = get_telegram_config()
@@ -1300,19 +1304,16 @@ def show_configuration():
         if st.button("🗑️ Effacer prédictions", key="config_clear_pred"):
             if HIST_FILE.exists():
                 HIST_FILE.unlink()
-                st.success("Historique effacé !")
                 st.rerun()
     with col2:
         if st.button("🗑️ Effacer combinés", key="config_clear_comb"):
             if COMB_HIST_FILE.exists():
                 COMB_HIST_FILE.unlink()
-                st.success("Combinés effacés !")
                 st.rerun()
     with col3:
         if st.button("🗑️ Réinit. stats", key="config_clear_stats"):
             if USER_STATS_FILE.exists():
                 USER_STATS_FILE.unlink()
-                st.success("Statistiques réinitialisées !")
                 st.rerun()
 
 # ─────────────────────────────────────────────────────────────
