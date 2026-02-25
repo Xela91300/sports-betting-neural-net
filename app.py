@@ -380,9 +380,6 @@ def create_progress_bar(value):
 
 def create_result_card(player1, player2, proba, confidence):
     favori = player1 if proba >= 0.5 else player2
-    proba_favori = proba if proba >= 0.5 else 1 - proba
-    outsider = player2 if proba >= 0.5 else player1
-    proba_outsider = 1 - proba if proba >= 0.5 else proba
     
     if confidence >= 70:
         conf_color = COLORS['success']
@@ -427,7 +424,7 @@ def create_result_card(player1, player2, proba, confidence):
 @st.cache_data(ttl=3600)
 def load_atp_data():
     if not DATA_DIR.exists(): 
-        return pd.DataFrame()  # Retourne DataFrame vide au lieu de None
+        return pd.DataFrame()
     csv_files = list(DATA_DIR.glob("*.csv"))
     if not csv_files: 
         return pd.DataFrame()
@@ -719,6 +716,7 @@ def show_predictions(atp_data):
     col1, col2 = st.columns(2)
     player1 = player2 = tournament = None
     surface = "Hard"
+    odds1 = odds2 = ""
     
     with col1:
         if not atp_data.empty:
@@ -728,23 +726,24 @@ def show_predictions(atp_data):
                 players = sorted(set(str(p).strip() for p in atp_data[winner_col].dropna().unique() if pd.notna(p)) |
                                set(str(p).strip() for p in atp_data[loser_col].dropna().unique() if pd.notna(p)))
                 if players:
-                    player1 = st.selectbox("Joueur 1", players)
+                    player1 = st.selectbox("Joueur 1", players, key="pred_p1")
                     players2 = [p for p in players if p != player1]
-                    player2 = st.selectbox("Joueur 2", players2)
+                    player2 = st.selectbox("Joueur 2", players2, key="pred_p2") if players2 else None
                     
                     if 'tourney_name' in atp_data.columns:
                         tournaments = sorted(atp_data['tourney_name'].dropna().unique())
-                        tournament = st.selectbox("Tournoi", tournaments) if tournaments else None
+                        tournament = st.selectbox("Tournoi", tournaments, key="pred_tournament") if tournaments else None
                         if tournament and 'surface' in atp_data.columns:
                             surface_df = atp_data[atp_data['tourney_name'] == tournament]['surface']
                             if not surface_df.empty:
                                 surface = surface_df.iloc[0]
                     
                     with st.expander("📊 Cotes bookmaker (optionnel)"):
-                        odds1 = st.text_input(f"Cote {player1}", placeholder="1.75")
-                        odds2 = st.text_input(f"Cote {player2}", placeholder="2.10")
+                        odds1 = st.text_input(f"Cote {player1}", key="pred_odds1", placeholder="1.75")
+                        odds2 = st.text_input(f"Cote {player2}", key="pred_odds2", placeholder="2.10") if player2 else st.text_input("Cote J2", key="pred_odds2", placeholder="2.10")
                     
-                    st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
+                    if surface in SURFACE_CONFIG:
+                        st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
     
     with col2:
         if player1 and player2:
@@ -755,7 +754,7 @@ def show_predictions(atp_data):
             confidence = calculate_confidence(proba, p1, p2, h2h)
             
             best_value = None
-            if 'odds1' in locals() and odds1 and odds2:
+            if odds1 and odds2:
                 try:
                     o1 = float(odds1.replace(',', '.'))
                     o2 = float(odds2.replace(',', '.'))
@@ -770,17 +769,15 @@ def show_predictions(atp_data):
             
             favori = p1 if proba >= 0.5 else p2
             
-            # Carte de résultat
             st.markdown(create_result_card(p1, p2, proba, confidence), unsafe_allow_html=True)
             
-            # Options Telegram et IA
             col_t1, col_t2, col_t3 = st.columns(3)
             with col_t1:
-                send_tg = st.checkbox("📤 Envoyer Telegram")
+                send_tg = st.checkbox("📤 Envoyer Telegram", key="pred_send_tg")
             with col_t2:
-                send_ai = st.checkbox("🤖 Ajouter analyse IA")
+                send_ai = st.checkbox("🤖 Ajouter analyse IA", key="pred_send_ai")
             with col_t3:
-                if st.button("🤖 Générer IA", use_container_width=True):
+                if st.button("🤖 Générer IA", key="pred_gen_ai", use_container_width=True):
                     with st.spinner("Analyse IA en cours..."):
                         vb_txt = f"Value bet sur {best_value['joueur']} (edge {best_value['edge']*100:+.1f}%)" if best_value else "Aucun value bet"
                         prompt = f"Analyse ce match ATP : {p1} vs {p2} sur {surface}. Proba: {p1} {proba:.1%} | {p2} {1-proba:.1%}. {vb_txt}. Donne une analyse concise en 3 points en français."
@@ -792,14 +789,14 @@ def show_predictions(atp_data):
             if best_value:
                 st.success(f"✅ Value bet! {best_value['joueur']} @ {best_value['cote']:.2f} (edge: {best_value['edge']*100:+.1f}%)")
             
-            if st.button("💾 Sauvegarder", use_container_width=True):
+            if st.button("💾 Sauvegarder", key="pred_save", use_container_width=True):
                 pred_data = {
                     'player1': p1, 'player2': p2,
                     'tournament': tournament or "Inconnu",
                     'surface': surface,
                     'proba': proba, 'confidence': confidence,
-                    'odds1': odds1 if 'odds1' in locals() and odds1 else None,
-                    'odds2': odds2 if 'odds2' in locals() and odds2 else None,
+                    'odds1': odds1 if odds1 else None,
+                    'odds2': odds2 if odds2 else None,
                     'favori_modele': favori, 'best_value': best_value,
                 }
                 if save_prediction(pred_data):
@@ -819,11 +816,11 @@ def show_multimatches(atp_data):
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        n_matches = st.number_input("Nombre de matchs", 2, MAX_MATCHES_ANALYSIS, 3)
+        n_matches = st.number_input("Nombre de matchs", 2, MAX_MATCHES_ANALYSIS, 3, key="mm_n")
     with col2:
-        use_ai = st.checkbox("Analyses IA", True)
+        use_ai = st.checkbox("Analyses IA", True, key="mm_use_ai")
     with col3:
-        send_all = st.checkbox("📱 Envoyer tout sur Telegram", False)
+        send_all = st.checkbox("📱 Envoyer tout sur Telegram", False, key="mm_send_all")
     
     if atp_data.empty:
         st.warning("Données non disponibles")
@@ -832,6 +829,7 @@ def show_multimatches(atp_data):
     winner_col = 'winner_name' if 'winner_name' in atp_data.columns else None
     loser_col = 'loser_name' if 'loser_name' in atp_data.columns else None
     if not winner_col or not loser_col:
+        st.warning("Colonnes joueurs non trouvées")
         return
     
     players = sorted(set(str(p).strip() for p in atp_data[winner_col].dropna().unique() if pd.notna(p)) |
@@ -845,9 +843,10 @@ def show_multimatches(atp_data):
             with col1:
                 p1 = st.selectbox(f"J1", players, key=f"mm_p1_{i}")
             with col2:
-                p2 = st.selectbox(f"J2", [p for p in players if p != p1], key=f"mm_p2_{i}")
+                p2_options = [p for p in players if p != p1]
+                p2 = st.selectbox(f"J2", p2_options, key=f"mm_p2_{i}") if p2_options else None
             with col3:
-                tourn = st.selectbox(f"Tournoi", tournaments, key=f"mm_tourn_{i}")
+                tourn = st.selectbox(f"Tournoi", tournaments, key=f"mm_tourn_{i}") if tournaments else None
             
             surface = "Hard"
             if tourn and 'surface' in atp_data.columns:
@@ -859,27 +858,34 @@ def show_multimatches(atp_data):
             with col1:
                 odds1 = st.text_input(f"Cote {p1}", key=f"mm_odds1_{i}", placeholder="1.75")
             with col2:
-                odds2 = st.text_input(f"Cote {p2}", key=f"mm_odds2_{i}", placeholder="2.10")
+                odds2 = st.text_input(f"Cote {p2}", key=f"mm_odds2_{i}", placeholder="2.10") if p2 else st.text_input(f"Cote J2", key=f"mm_odds2_{i}", placeholder="2.10")
             
-            st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
+            if surface in SURFACE_CONFIG:
+                st.markdown(create_badge(f"{SURFACE_CONFIG[surface]['icon']} {surface}", SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
             
             matches.append({
-                'player1': p1.strip(), 'player2': p2.strip(),
+                'player1': p1.strip() if p1 else None, 
+                'player2': p2.strip() if p2 else None,
                 'tournament': tourn, 'surface': surface,
                 'odds1': odds1, 'odds2': odds2,
             })
     
-    if st.button(f"🔍 Analyser", use_container_width=True):
+    if st.button(f"🔍 Analyser", key="mm_analyze", use_container_width=True):
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         results = []
         progress = st.progress(0)
         
-        for i, match in enumerate(matches):
+        valid_matches = [m for m in matches if m['player1'] and m['player2']]
+        
+        if not valid_matches:
+            st.warning("Veuillez remplir au moins un match complet")
+            return
+        
+        for i, match in enumerate(valid_matches):
             h2h = get_h2h_stats(atp_data, match['player1'], match['player2'])
             proba = calculate_probability(atp_data, match['player1'], match['player2'], match['surface'], h2h)
             confidence = calculate_confidence(proba, match['player1'], match['player2'], h2h)
             
-            edge1 = edge2 = None
             best_value = None
             if match['odds1'] and match['odds2']:
                 try:
@@ -894,17 +900,15 @@ def show_multimatches(atp_data):
                 except: 
                     pass
             
-            favori = match['player1'] if proba >= 0.5 else match['player2']
-            
             pred_data = {
                 'player1': match['player1'], 'player2': match['player2'],
                 'tournament': match['tournament'], 'surface': match['surface'],
                 'proba': proba, 'confidence': confidence,
                 'odds1': match['odds1'], 'odds2': match['odds2'],
-                'favori_modele': favori, 'best_value': best_value,
+                'favori_modele': match['player1'] if proba >= 0.5 else match['player2'],
+                'best_value': best_value,
             }
             
-            # Carte de résultat
             st.markdown(f"### Match {i+1}: {match['player1']} vs {match['player2']}")
             st.markdown(create_result_card(match['player1'], match['player2'], proba, confidence), unsafe_allow_html=True)
             
@@ -923,7 +927,7 @@ def show_multimatches(atp_data):
                             send_prediction_to_telegram(pred_data, ai)
             
             results.append(pred_data)
-            progress.progress((i + 1) / len(matches))
+            progress.progress((i + 1) / len(valid_matches))
         
         progress.empty()
 
@@ -935,20 +939,22 @@ def show_combines(atp_data):
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        n_matches = st.number_input("Matchs", 2, MAX_MATCHES_COMBINE, 3)
+        n_matches = st.number_input("Matchs", 2, MAX_MATCHES_COMBINE, 3, key="comb_n")
     with col2:
-        mise = st.number_input("Mise (€)", 1.0, 10000.0, 10.0)
+        mise = st.number_input("Mise (€)", 1.0, 10000.0, 10.0, key="comb_mise")
     with col3:
-        use_ai = st.checkbox("Analyses IA", True)
+        use_ai = st.checkbox("Analyses IA", True, key="comb_use_ai")
     with col4:
-        send_tg = st.checkbox("📱 Envoyer Telegram", False)
+        send_tg = st.checkbox("📱 Envoyer Telegram", False, key="comb_send_tg")
     
     if atp_data.empty:
+        st.warning("Données non disponibles")
         return
     
     winner_col = 'winner_name' if 'winner_name' in atp_data.columns else None
     loser_col = 'loser_name' if 'loser_name' in atp_data.columns else None
     if not winner_col or not loser_col:
+        st.warning("Colonnes joueurs non trouvées")
         return
     
     players = sorted(set(str(p).strip() for p in atp_data[winner_col].dropna().unique() if pd.notna(p)) |
@@ -965,15 +971,16 @@ def show_combines(atp_data):
             with col1:
                 p1 = st.selectbox("J1", players, key=f"comb_p1_{i}", label_visibility="collapsed")
             with col2:
-                p2 = st.selectbox("J2", [p for p in players if p != p1], key=f"comb_p2_{i}", label_visibility="collapsed")
+                p2_options = [p for p in players if p != p1]
+                p2 = st.selectbox("J2", p2_options, key=f"comb_p2_{i}", label_visibility="collapsed") if p2_options else None
             with col3:
-                tourn = st.selectbox("T", tournaments, key=f"comb_tourn_{i}", label_visibility="collapsed")
+                tourn = st.selectbox("T", tournaments, key=f"comb_tourn_{i}", label_visibility="collapsed") if tournaments else None
             
             col1, col2 = st.columns(2)
             with col1:
                 odds1 = st.text_input(f"Cote {p1}", key=f"comb_odds1_{i}", placeholder="1.75")
             with col2:
-                odds2 = st.text_input(f"Cote {p2}", key=f"comb_odds2_{i}", placeholder="2.10")
+                odds2 = st.text_input(f"Cote {p2}", key=f"comb_odds2_{i}", placeholder="2.10") if p2 else st.text_input(f"Cote J2", key=f"comb_odds2_{i}", placeholder="2.10")
             
             surface = "Hard"
             if tourn and 'surface' in atp_data.columns:
@@ -981,17 +988,20 @@ def show_combines(atp_data):
                 if not s_df.empty:
                     surface = s_df.iloc[0]
             
-            st.markdown(create_badge(surface, SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
+            if surface in SURFACE_CONFIG:
+                st.markdown(create_badge(surface, SURFACE_CONFIG[surface]['color']), unsafe_allow_html=True)
+            
             if i < n_matches - 1:
                 st.markdown("---")
             
             matches.append({
-                'player1': p1.strip(), 'player2': p2.strip(),
+                'player1': p1.strip() if p1 else None, 
+                'player2': p2.strip() if p2 else None,
                 'tournament': tourn, 'surface': surface,
                 'odds1': odds1, 'odds2': odds2,
             })
     
-    if st.button("🎯 Générer le combiné", use_container_width=True):
+    if st.button("🎯 Générer le combiné", key="comb_generate", use_container_width=True):
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         selections = []
         
@@ -1095,11 +1105,11 @@ def show_history():
                     if pred.get('statut') == 'en_attente':
                         col_b1, col_b2 = st.columns(2)
                         with col_b1:
-                            if st.button(f"✅ {pred['player1']} gagne", key=f"win1_{pred.get('id','')}"):
+                            if st.button(f"✅ {pred['player1']} gagne", key=f"hist_win1_{pred.get('id','')}"):
                                 update_prediction_status(pred.get('id',''), 'joueur1_gagne')
                                 st.rerun()
                         with col_b2:
-                            if st.button(f"✅ {pred['player2']} gagne", key=f"win2_{pred.get('id','')}"):
+                            if st.button(f"✅ {pred['player2']} gagne", key=f"hist_win2_{pred.get('id','')}"):
                                 update_prediction_status(pred.get('id',''), 'joueur2_gagne')
                                 st.rerun()
         else:
@@ -1156,14 +1166,14 @@ def show_telegram():
         send_custom_message()
     
     with tab2:
-        if st.button("📊 Envoyer les statistiques", use_container_width=True):
+        if st.button("📊 Envoyer les statistiques", key="tg_send_stats", use_container_width=True):
             if send_stats_to_telegram():
                 st.success("✅ Stats envoyées !")
             else:
                 st.error("❌ Échec")
     
     with tab3:
-        if st.button("🔧 Tester la connexion", use_container_width=True):
+        if st.button("🔧 Tester la connexion", key="tg_test", use_container_width=True):
             success, msg = test_telegram_connection()
             if success:
                 st.success(msg)
@@ -1201,17 +1211,17 @@ def show_configuration():
     st.markdown("### 🗑️ Gestion des données")
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("🗑️ Effacer prédictions"):
+        if st.button("🗑️ Effacer prédictions", key="config_clear_pred"):
             if HIST_FILE.exists():
                 HIST_FILE.unlink()
                 st.rerun()
     with col2:
-        if st.button("🗑️ Effacer combinés"):
+        if st.button("🗑️ Effacer combinés", key="config_clear_comb"):
             if COMB_HIST_FILE.exists():
                 COMB_HIST_FILE.unlink()
                 st.rerun()
     with col3:
-        if st.button("🗑️ Réinit. stats"):
+        if st.button("🗑️ Réinit. stats", key="config_clear_stats"):
             if USER_STATS_FILE.exists():
                 USER_STATS_FILE.unlink()
                 st.rerun()
