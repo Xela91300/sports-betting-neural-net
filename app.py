@@ -12,6 +12,7 @@ import warnings
 import asyncio
 import nest_asyncio
 import os
+import requests
 
 nest_asyncio.apply()
 warnings.filterwarnings('ignore')
@@ -25,6 +26,23 @@ try:
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
+    # Fallback avec requests si python-telegram-bot n'est pas installé
+    def send_telegram_message_requests(message, parse_mode='HTML'):
+        token, chat_id = get_telegram_config()
+        if not token or not chat_id:
+            return False
+        try:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = {
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': parse_mode,
+                'disable_web_page_preview': True
+            }
+            response = requests.post(url, json=payload, timeout=10)
+            return response.status_code == 200
+        except:
+            return False
 
 def get_telegram_config():
     """Récupère la config Telegram depuis les secrets Streamlit"""
@@ -57,14 +75,20 @@ async def send_telegram_message_async(message, parse_mode='HTML'):
         return False
 
 def send_telegram_message(message, parse_mode='HTML'):
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(send_telegram_message_async(message, parse_mode))
-        loop.close()
-        return result
-    except:
-        return False
+    # Essayer d'abord avec la bibliothèque telegram
+    if TELEGRAM_AVAILABLE:
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(send_telegram_message_async(message, parse_mode))
+            loop.close()
+            if result:
+                return True
+        except:
+            pass
+    
+    # Fallback avec requests
+    return send_telegram_message_requests(message, parse_mode) if 'send_telegram_message_requests' in dir() else False
 
 def format_prediction_message(pred_data, ai_comment=None):
     emoji_map = {'Hard': '🟦', 'Clay': '🟧', 'Grass': '🟩'}
@@ -198,6 +222,7 @@ def test_telegram_connection():
     token, chat_id = get_telegram_config()
     if not token or not chat_id:
         return False, "❌ Configuration Telegram manquante"
+    
     test_message = f"""
 <b>🔧 TEST DE CONNEXION RÉUSSI!</b>
 
@@ -208,8 +233,9 @@ def test_telegram_connection():
 #TennisIQ #Test
 """
     if send_telegram_message(test_message):
-        return True, "✅ Connexion réussie !"
-    return False, "❌ Échec de l'envoi"
+        return True, "✅ Connexion réussie ! Message de test envoyé."
+    else:
+        return False, "❌ Échec de l'envoi. Vérifie ton token et chat_id"
 
 def send_custom_message():
     st.markdown("### 📝 Message personnalisé")
@@ -223,7 +249,44 @@ def send_custom_message():
             if send_telegram_message(msg):
                 st.success("✅ Message envoyé !")
             else:
-                st.error("❌ Échec de l'envoi")
+                st.error("❌ Échec de l'envoi. Vérifie la configuration Telegram.")
+
+# ─────────────────────────────────────────────────────────────
+# GROQ API (CORRECTION)
+# ─────────────────────────────────────────────────────────────
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+
+def get_groq_key():
+    """Récupère la clé Groq depuis les secrets"""
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except:
+        return os.environ.get("GROQ_API_KEY", None)
+
+def call_groq_api(prompt):
+    """Appelle l'API Groq pour générer une analyse"""
+    if not GROQ_AVAILABLE:
+        return "⚠️ Bibliothèque Groq non installée. Installe avec: pip install groq"
+    
+    api_key = get_groq_key()
+    if not api_key:
+        return "⚠️ Clé API Groq non configurée. Ajoute GROQ_API_KEY dans les secrets."
+    
+    try:
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"❌ Erreur API Groq: {str(e)}"
 
 # ─────────────────────────────────────────────────────────────
 # ML IMPORTS
@@ -785,6 +848,8 @@ def show_predictions(atp_data):
                         if ai_analysis:
                             st.session_state['last_ai'] = ai_analysis
                             st.info(ai_analysis)
+                        else:
+                            st.warning("L'analyse IA n'a pas pu être générée. Vérifie la configuration Groq.")
             
             if best_value:
                 st.success(f"✅ Value bet! {best_value['joueur']} @ {best_value['cote']:.2f} (edge: {best_value['edge']*100:+.1f}%)")
@@ -805,8 +870,10 @@ def show_predictions(atp_data):
                         ai_comment = st.session_state.get('last_ai') if send_ai else None
                         if send_prediction_to_telegram(pred_data, ai_comment):
                             st.success("📱 Envoyé sur Telegram !")
+                        else:
+                            st.error("❌ Échec de l'envoi Telegram. Vérifie la configuration.")
                 else:
-                    st.error("❌ Erreur")
+                    st.error("❌ Erreur lors de la sauvegarde")
 
 # ─────────────────────────────────────────────────────────────
 # MULTI-MATCHS
@@ -1074,7 +1141,8 @@ def show_combines(atp_data):
                 with st.spinner("Analyse IA du combiné..."):
                     prompt = f"Analyse ce combiné de {len(selected)} matchs. Proba: {proba_combi:.1%}, cote: {cote_combi:.2f}, espérance: {esperance:+.2f}€. Sélections: {[s['joueur'] for s in selected]}. Avis en 3 points."
                     ai = call_groq_api(prompt)
-                    send_combine_to_telegram(combine_data, ai)
+                    if ai:
+                        send_combine_to_telegram(combine_data, ai)
         else:
             st.warning(f"⚠️ Pas assez de sélections valides ({len(selections)} trouvées)")
 
@@ -1158,7 +1226,21 @@ def show_telegram():
     token, chat_id = get_telegram_config()
     if not token or not chat_id:
         st.warning("⚠️ Telegram non configuré. Ajoute les secrets TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID")
+        st.markdown("""
+        **Configuration rapide:**
+        1. Va sur Telegram, cherche @BotFather
+        2. Envoie `/newbot` et suis les instructions
+        3. Copie le token donné
+        4. Cherche @userinfobot pour obtenir ton chat_id
+        5. Ajoute dans les secrets:
+        ```toml
+        TELEGRAM_BOT_TOKEN = "ton_token"
+        TELEGRAM_CHAT_ID = "ton_chat_id"
+        ```
+        """)
         return
+    
+    st.success(f"✅ Telegram configuré (Chat ID: {chat_id})")
     
     tab1, tab2, tab3 = st.tabs(["✏️ Message simple", "📊 Stats", "⚡ Test"])
     
@@ -1167,18 +1249,20 @@ def show_telegram():
     
     with tab2:
         if st.button("📊 Envoyer les statistiques", key="tg_send_stats", use_container_width=True):
-            if send_stats_to_telegram():
-                st.success("✅ Stats envoyées !")
-            else:
-                st.error("❌ Échec")
+            with st.spinner("Envoi en cours..."):
+                if send_stats_to_telegram():
+                    st.success("✅ Stats envoyées !")
+                else:
+                    st.error("❌ Échec de l'envoi. Vérifie la configuration.")
     
     with tab3:
         if st.button("🔧 Tester la connexion", key="tg_test", use_container_width=True):
-            success, msg = test_telegram_connection()
-            if success:
-                st.success(msg)
-            else:
-                st.error(msg)
+            with st.spinner("Test en cours..."):
+                success, msg = test_telegram_connection()
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -1189,6 +1273,8 @@ def show_configuration():
     st.markdown("### 🤖 Intelligence Artificielle")
     groq_status = "✅ Connecté" if get_groq_key() else "❌ Non configuré"
     st.markdown(f"**Groq API:** {groq_status}")
+    if not get_groq_key():
+        st.info("Pour activer l'IA, ajoute GROQ_API_KEY dans les secrets")
     
     st.markdown("### 📱 Telegram")
     token, chat_id = get_telegram_config()
@@ -1214,16 +1300,19 @@ def show_configuration():
         if st.button("🗑️ Effacer prédictions", key="config_clear_pred"):
             if HIST_FILE.exists():
                 HIST_FILE.unlink()
+                st.success("Historique effacé !")
                 st.rerun()
     with col2:
         if st.button("🗑️ Effacer combinés", key="config_clear_comb"):
             if COMB_HIST_FILE.exists():
                 COMB_HIST_FILE.unlink()
+                st.success("Combinés effacés !")
                 st.rerun()
     with col3:
         if st.button("🗑️ Réinit. stats", key="config_clear_stats"):
             if USER_STATS_FILE.exists():
                 USER_STATS_FILE.unlink()
+                st.success("Statistiques réinitialisées !")
                 st.rerun()
 
 # ─────────────────────────────────────────────────────────────
