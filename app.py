@@ -54,7 +54,7 @@ FEATURES = [
 ]
 
 SURFACES = ["Hard", "Clay", "Grass"]
-TOURS = {"ATP": "atp", "WTA": "wta"}
+TOURS = {"ATP": "atp"}
 ATP_ONLY = True
 START_YEAR = 2007
 
@@ -922,53 +922,58 @@ def create_stat_row(key, value, value_color=COLORS["white"]):
     """
 
 # ─────────────────────────────────────────────────────────────
-# CHARGEMENT DES DONNÉES
+# CHARGEMENT DES DONNÉES ATP UNIQUEMENT
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
-def load_tennis_data():
-    """Charge les données tennis"""
+def load_atp_data():
+    """Charge uniquement les données ATP"""
     if not DATA_DIR.exists():
-        return None, None
+        return None
     
     csv_files = list(DATA_DIR.glob("*.csv"))
     if not csv_files:
-        return None, None
+        return None
     
-    atp_data = []
-    wta_data = []
+    atp_dfs = []
     
     for f in csv_files:
+        # Ne charger que les fichiers ATP (ignorer WTA)
+        if 'wta' in f.name.lower():
+            continue
+            
         try:
-            df = pd.read_csv(f, encoding='latin-1', low_memory=False)
-            if 'atp' in f.name.lower():
-                atp_data.append(df)
+            # Essayer différents délimiteurs et encodages
+            for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    # Essayer d'abord avec la détection automatique
+                    df = pd.read_csv(f, encoding=encoding, on_bad_lines='skip', low_memory=False)
+                    break
+                except:
+                    try:
+                        # Essayer avec point-virgule comme délimiteur
+                        df = pd.read_csv(f, sep=';', encoding=encoding, on_bad_lines='skip', low_memory=False)
+                        break
+                    except:
+                        continue
+            
+            # Vérifier si le fichier a les colonnes nécessaires
+            if 'winner_name' in df.columns and 'loser_name' in df.columns:
+                atp_dfs.append(df)
+                st.success(f"✅ Chargé: {f.name} ({len(df)} matchs)")
             else:
-                wta_data.append(df)
+                st.warning(f"⚠️ Format non reconnu: {f.name}")
+                
         except Exception as e:
-            st.warning(f"Erreur lors du chargement de {f.name}: {e}")
+            st.warning(f"⚠️ Erreur lors du chargement de {f.name}")
             continue
     
-    atp = pd.concat(atp_data, ignore_index=True) if atp_data else None
-    wta = pd.concat(wta_data, ignore_index=True) if wta_data else None
-    
-    return atp, wta
-
-@st.cache_resource
-def load_model(tour, surface):
-    """Charge un modèle"""
-    model_path = MODELS_DIR / f"tennis_model_{tour}_{surface.lower()}.h5"
-    scaler_path = MODELS_DIR / f"tennis_scaler_{tour}_{surface.lower()}.joblib"
-    
-    if not model_path.exists():
-        return None, None
-    
-    try:
-        from tensorflow.keras.models import load_model
-        model = load_model(str(model_path))
-        scaler = joblib.load(str(scaler_path)) if scaler_path.exists() else None
-        return model, scaler
-    except:
-        return None, None
+    if atp_dfs:
+        atp_data = pd.concat(atp_dfs, ignore_index=True)
+        st.success(f"✅ Total: {len(atp_data)} matchs ATP chargés")
+        return atp_data
+    else:
+        st.error("❌ Aucune donnée ATP valide trouvée")
+        return None
 
 # ─────────────────────────────────────────────────────────────
 # FONCTIONS DE CALCUL
@@ -1171,9 +1176,9 @@ def main():
     <div class="divider"></div>
     """, unsafe_allow_html=True)
     
-    # Chargement des données
-    with st.spinner("Chargement des données..."):
-        atp_data, wta_data = load_tennis_data()
+    # Chargement des données ATP uniquement
+    with st.spinner("Chargement des données ATP..."):
+        atp_data = load_atp_data()
     
     # Sidebar - Navigation
     with st.sidebar:
@@ -1201,8 +1206,6 @@ def main():
         
         if atp_data is not None:
             st.markdown(create_badge(f"ATP: {len(atp_data):,} matchs", "primary"), unsafe_allow_html=True)
-        if wta_data is not None:
-            st.markdown(create_badge(f"WTA: {len(wta_data):,} matchs", "secondary"), unsafe_allow_html=True)
         
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         
@@ -1216,13 +1219,13 @@ def main():
     
     # Routes
     if page == "🏠 Dashboard":
-        show_dashboard(atp_data, wta_data)
+        show_dashboard(atp_data)
     elif page == "🎯 Prédictions":
-        show_predictions(atp_data, wta_data)
+        show_predictions(atp_data)
     elif page == "📊 Multi-matchs":
-        show_multimatches(atp_data, wta_data)
+        show_multimatches(atp_data)
     elif page == "🎰 Combinés":
-        show_combines(atp_data, wta_data)
+        show_combines(atp_data)
     elif page == "📜 Historique":
         show_history()
     elif page == "📈 Statistiques":
@@ -1233,25 +1236,22 @@ def main():
 # ─────────────────────────────────────────────────────────────
 # DASHBOARD
 # ─────────────────────────────────────────────────────────────
-def show_dashboard(atp_data, wta_data):
+def show_dashboard(atp_data):
     """Affiche le dashboard principal"""
     
     st.markdown("<h2>🏠 Tableau de Bord</h2>", unsafe_allow_html=True)
     
     # Statistiques rapides
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown(create_metric("Matchs ATP", format_number(len(atp_data) if atp_data is not None else 0), ""), unsafe_allow_html=True)
     
     with col2:
-        st.markdown(create_metric("Matchs WTA", format_number(len(wta_data) if wta_data is not None else 0), ""), unsafe_allow_html=True)
-    
-    with col3:
         history = load_history()
         st.markdown(create_metric("Prédictions", format_number(len(history)), ""), unsafe_allow_html=True)
     
-    with col4:
+    with col3:
         stats = load_user_stats()
         accuracy = (stats.get('correct_predictions', 0) / stats.get('total_predictions', 1)) * 100 if stats.get('total_predictions', 0) > 0 else 0
         st.markdown(create_metric("Précision", f"{accuracy:.1f}", "%", COLORS['success'] if accuracy >= 60 else COLORS['warning']), unsafe_allow_html=True)
@@ -1310,7 +1310,7 @@ def show_dashboard(atp_data, wta_data):
 # ─────────────────────────────────────────────────────────────
 # PRÉDICTIONS
 # ─────────────────────────────────────────────────────────────
-def show_predictions(atp_data, wta_data):
+def show_predictions(atp_data):
     """Affiche l'interface de prédiction simple"""
     
     st.markdown("<h2>🎯 Prédiction Simple</h2>", unsafe_allow_html=True)
@@ -1318,11 +1318,8 @@ def show_predictions(atp_data, wta_data):
     col1, col2 = st.columns(2)
     
     with col1:
-        # Sélection du circuit
-        circuit = st.selectbox("Circuit", ["ATP", "WTA"] if not ATP_ONLY else ["ATP"])
-        
-        # Données actives
-        df = atp_data if circuit == "ATP" else wta_data
+        # Données ATP uniquement
+        df = atp_data
         
         if df is not None and not df.empty:
             # Vérifier les colonnes disponibles
@@ -1397,7 +1394,7 @@ def show_predictions(atp_data, wta_data):
                     'surface': surface,
                     'proba': proba,
                     'confidence': confidence,
-                    'circuit': circuit
+                    'circuit': "ATP"
                 }
                 if save_prediction(pred_data):
                     st.success("Prédiction sauvegardée !")
@@ -1438,7 +1435,7 @@ def show_predictions(atp_data, wta_data):
 # ─────────────────────────────────────────────────────────────
 # MULTI-MATCHS
 # ─────────────────────────────────────────────────────────────
-def show_multimatches(atp_data, wta_data):
+def show_multimatches(atp_data):
     """Affiche l'interface multi-matchs"""
     
     st.markdown("<h2>📊 Multi-matchs</h2>", unsafe_allow_html=True)
@@ -1450,12 +1447,9 @@ def show_multimatches(atp_data, wta_data):
         n_matches = st.number_input("Nombre de matchs", min_value=2, max_value=10, value=3)
     
     with col2:
-        circuit = st.selectbox("Circuit", ["ATP", "WTA"] if not ATP_ONLY else ["ATP"])
-    
-    with col3:
         use_ai = st.checkbox("Activer l'analyse IA", value=True)
     
-    df = atp_data if circuit == "ATP" else wta_data
+    df = atp_data
     
     if df is not None and not df.empty:
         winner_col = 'winner_name' if 'winner_name' in df.columns else None
@@ -1572,7 +1566,7 @@ def show_multimatches(atp_data, wta_data):
 # ─────────────────────────────────────────────────────────────
 # COMBINÉS
 # ─────────────────────────────────────────────────────────────
-def show_combines(atp_data, wta_data):
+def show_combines(atp_data):
     """Affiche l'interface des combinés"""
     
     st.markdown("<h2>🎰 Générateur de Combinés</h2>", unsafe_allow_html=True)
@@ -1587,12 +1581,9 @@ def show_combines(atp_data, wta_data):
         mise = st.number_input("Mise (€)", min_value=1.0, max_value=1000.0, value=10.0, step=5.0)
     
     with col3:
-        circuit = st.selectbox("Circuit", ["ATP", "WTA"] if not ATP_ONLY else ["ATP"])
-    
-    with col4:
         use_ai = st.checkbox("Analyses IA", value=True)
     
-    df = atp_data if circuit == "ATP" else wta_data
+    df = atp_data
     
     if df is not None and not df.empty:
         winner_col = 'winner_name' if 'winner_name' in df.columns else None
@@ -1806,17 +1797,12 @@ def show_history():
                 filter_surface = st.selectbox("Surface", ["Toutes"] + SURFACES)
             
             with col2:
-                filter_circuit = st.selectbox("Circuit", ["Tous", "ATP", "WTA"])
-            
-            with col3:
                 search = st.text_input("Rechercher un joueur", placeholder="Nom...")
             
             # Appliquer les filtres
             filtered = history
             if filter_surface != "Toutes":
                 filtered = [h for h in filtered if h.get('surface') == filter_surface]
-            if filter_circuit != "Tous":
-                filtered = [h for h in filtered if h.get('circuit') == filter_circuit]
             if search:
                 filtered = [h for h in filtered if search.lower() in h.get('player1', '').lower() or search.lower() in h.get('player2', '').lower()]
             
@@ -1943,20 +1929,6 @@ def show_statistics():
     with col4:
         roi_color = COLORS['success'] if roi >= 0 else COLORS['danger']
         st.markdown(create_metric("ROI", f"{roi:+.1f}", "%", roi_color), unsafe_allow_html=True)
-    
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    
-    # Graphiques simples avec st.bar_chart
-    if history:
-        st.markdown("<h3>📊 Évolution des prédictions</h3>", unsafe_allow_html=True)
-        
-        # Compter les prédictions par mois
-        df_history = pd.DataFrame(history)
-        if 'date' in df_history.columns:
-            df_history['date'] = pd.to_datetime(df_history['date'])
-            df_history['mois'] = df_history['date'].dt.to_period('M').astype(str)
-            monthly_counts = df_history['mois'].value_counts().sort_index()
-            st.line_chart(monthly_counts)
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -1970,9 +1942,6 @@ def show_configuration():
     
     with col1:
         st.markdown("### 🎾 Paramètres généraux")
-        
-        # Mode ATP seulement
-        atp_only = st.checkbox("ATP seulement", value=ATP_ONLY, help="Masquer les données WTA")
         
         # Année de début
         start_year = st.number_input("Année de début", min_value=2000, max_value=2024, value=START_YEAR)
