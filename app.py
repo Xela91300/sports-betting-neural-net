@@ -2682,9 +2682,34 @@ with tab_hist:
             surf_cls = {"Hard":"badge-hard","Clay":"badge-clay","Grass":"badge-grass"}.get(surf_h,"badge-hard")
 
             with st.container():
+                # Construire la section cotes séparément pour éviter l'expression conditionnelle dans f-string
+                cotes_html = ""
+                if odds_h1:
+                    cotes_html = f"""
+                        <div style="flex:1; text-align:center; min-width:80px;">
+                            <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">COTES</div>
+                            <div style="font-size:0.82rem; color:#c8c0b0;">{odds_h1} / {odds_h2}</div>
+                        </div>"""
+
+                # Value bet HTML si cotes disponibles
+                vb_html = ""
+                if odds_h1 and odds_h2:
+                    try:
+                        impl_h1 = 1 / float(odds_h1)
+                        impl_h2 = 1 / float(odds_h2)
+                        edge_h1 = proba_h - impl_h1
+                        edge_h2 = (1-proba_h) - impl_h2
+                        best_edge = edge_h1 if abs(edge_h1) >= abs(edge_h2) else edge_h2
+                        best_player = p1 if abs(edge_h1) >= abs(edge_h2) else p2
+                        ec = "#3dd68c" if best_edge > 0.04 else "#e07878" if best_edge < -0.04 else "#f5c842"
+                        vb_icon = "✅ VALUE" if best_edge > 0.04 else "❌ No value"
+                        vb_html = f'<div style="font-size:0.68rem; color:{ec}; margin-top:6px;">{vb_icon} {best_player} · edge {best_edge*100:+.1f}%</div>'
+                    except Exception:
+                        pass
+
                 st.markdown(f"""
-                <div class="card" style="margin-bottom:8px; border-color:{status_color}22; padding:16px 20px;">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                <div class="card" style="margin-bottom:4px; border-color:{status_color}33; padding:16px 20px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
 
                         <div style="flex:3; min-width:200px;">
                             <div style="font-size:0.65rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">
@@ -2695,22 +2720,25 @@ with tab_hist:
                             </div>
                             <div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
                                 <span class="badge {surf_cls}" style="font-size:0.62rem;">{surf_h}</span>
-                                <span style="font-size:0.72rem; color:#4a5e60;">Favori : <span style="color:#c8c0b0;">{favori_h}</span></span>
+                                <span style="font-size:0.72rem; color:#4a5e60;">
+                                    Favori : <span style="color:#c8c0b0;">{favori_h}</span>
+                                </span>
                             </div>
+                            {vb_html}
                         </div>
 
-                        <div style="flex:1; text-align:center; min-width:80px;">
+                        <div style="flex:1; text-align:center; min-width:72px;">
                             <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">PROBA</div>
                             <div style="font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:#e8e0d0;">{proba_h:.0%}</div>
-                            <div style="font-size:0.65rem; color:#4a5e60;">{p1}</div>
+                            <div style="font-size:0.62rem; color:#4a5e60;">{p1}</div>
                         </div>
 
-                        <div style="flex:1; text-align:center; min-width:80px;">
+                        <div style="flex:1; text-align:center; min-width:72px;">
                             <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;">CONF.</div>
                             <div style="font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:{conf_color_h};">{conf_h}</div>
                         </div>
 
-                        {"<div style='flex:1; text-align:center; min-width:80px;'><div style='font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:4px;'>COTES</div><div style='font-size:0.82rem; color:#c8c0b0;'>" + str(odds_h1) + " / " + str(odds_h2) + "</div></div>" if odds_h1 else ""}
+                        {cotes_html}
 
                         <div style="flex:1; text-align:center; min-width:80px;">
                             <div style="font-size:0.6rem; color:#4a5e60; letter-spacing:2px; margin-bottom:6px;">RÉSULTAT</div>
