@@ -525,7 +525,7 @@ def create_result_card(player1, player2, proba, confidence):
     """
 
 # ─────────────────────────────────────────────────────────────
-# MODÈLE ML COMPLET ET OPTIMISÉ
+# MODÈLE ML COMPLET ET OPTIMISÉ (CORRIGÉ)
 # ─────────────────────────────────────────────────────────────
 
 def precompute_player_stats_ml_complete(df):
@@ -557,7 +557,7 @@ def precompute_player_stats_ml_complete(df):
         if idx % 100 == 0:
             progress_text.text(f"🔄 Calcul des stats: {idx}/{total_players} joueurs...")
         
-        if not player or player == 'nan':
+        if not player or player == 'nan' or player == '':
             continue
         
         # Tous les matchs du joueur
@@ -570,10 +570,10 @@ def precompute_player_stats_ml_complete(df):
         player_matches = pd.concat([
             wins_df.assign(_is_winner=1),
             loss_df.assign(_is_winner=0)
-        ]).sort_values('tourney_date') if 'tourney_date' in df.columns else pd.concat([
-            wins_df.assign(_is_winner=1),
-            loss_df.assign(_is_winner=0)
         ])
+        
+        if 'tourney_date' in player_matches.columns:
+            player_matches = player_matches.sort_values('tourney_date')
         
         if len(player_matches) == 0:
             continue
@@ -584,37 +584,48 @@ def precompute_player_stats_ml_complete(df):
         # ── Classement le plus récent ─────────────────────
         rank = 500.0
         rank_points = 0.0
+        age = 25.0
         
-        if len(wins_df) > 0 and 'winner_rank' in df.columns:
+        # Classement
+        if len(wins_df) > 0 and 'winner_rank' in wins_df.columns:
             r = wins_df['winner_rank'].dropna()
             if len(r) > 0:
                 rank = float(r.iloc[-1])
-        if rank == 500.0 and len(loss_df) > 0 and 'loser_rank' in df.columns:
+        if rank == 500.0 and len(loss_df) > 0 and 'loser_rank' in loss_df.columns:
             r = loss_df['loser_rank'].dropna()
             if len(r) > 0:
                 rank = float(r.iloc[-1])
         
-        if len(wins_df) > 0 and 'winner_rank_points' in df.columns:
+        # Points ATP
+        if len(wins_df) > 0 and 'winner_rank_points' in wins_df.columns:
             p = wins_df['winner_rank_points'].dropna()
             if len(p) > 0:
-                rank_points = float(p.iloc[-1])
+                try:
+                    rank_points = float(p.iloc[-1])
+                except:
+                    rank_points = 0.0
         
-        # ── Âge ──────────────────────────────────────────
-        age = 25.0
-        if len(wins_df) > 0 and 'winner_age' in df.columns:
+        # Âge
+        if len(wins_df) > 0 and 'winner_age' in wins_df.columns:
             a = wins_df['winner_age'].dropna()
             if len(a) > 0:
-                age = float(a.mean())
-        if age == 25.0 and len(loss_df) > 0 and 'loser_age' in df.columns:
+                try:
+                    age = float(a.mean())
+                except:
+                    age = 25.0
+        if age == 25.0 and len(loss_df) > 0 and 'loser_age' in loss_df.columns:
             a = loss_df['loser_age'].dropna()
             if len(a) > 0:
-                age = float(a.mean())
+                try:
+                    age = float(a.mean())
+                except:
+                    age = 25.0
         
         # ── Win rates par surface ────────────────────────
         surface_wr = {'Hard': 0.5, 'Clay': 0.5, 'Grass': 0.5}
         surface_matches = {'Hard': 0, 'Clay': 0, 'Grass': 0}
         
-        if 'surface' in df.columns:
+        if 'surface' in player_matches.columns:
             for surf in ['Hard', 'Clay', 'Grass']:
                 surf_matches = player_matches[player_matches['surface'] == surf]
                 if len(surf_matches) > 0:
@@ -652,12 +663,22 @@ def precompute_player_stats_ml_complete(df):
         for stat, (wc, lc) in serve_cols.items():
             vals = []
             if wc in df.columns:
-                vals.extend(wins_df[wc].dropna().tolist())
+                w_vals = wins_df[wc].dropna()
+                if len(w_vals) > 0:
+                    vals.extend(w_vals.tolist())
             if lc in df.columns:
-                vals.extend(loss_df[lc].dropna().tolist())
+                l_vals = loss_df[lc].dropna()
+                if len(l_vals) > 0:
+                    vals.extend(l_vals.tolist())
             
             if vals:
-                numeric_vals = [float(v) for v in vals if pd.notna(v)]
+                numeric_vals = []
+                for v in vals:
+                    try:
+                        if pd.notna(v):
+                            numeric_vals.append(float(v))
+                    except:
+                        continue
                 if numeric_vals:
                     serve_stats[stat] = float(np.mean(numeric_vals))
         
@@ -666,10 +687,10 @@ def precompute_player_stats_ml_complete(df):
         in1st = serve_stats['1stIn']
         
         serve_pct = {
-            'pct_1st_in': in1st / svpt,
-            'pct_1st_won': serve_stats['1stWon'] / max(in1st, 1),
-            'pct_2nd_won': serve_stats['2ndWon'] / max(svpt - in1st, 1),
-            'pct_bp_saved': serve_stats['bpSaved'] / max(serve_stats['bpFaced'], 1),
+            'pct_1st_in': in1st / svpt if svpt > 0 else 0.0,
+            'pct_1st_won': serve_stats['1stWon'] / max(in1st, 1) if in1st > 0 else 0.0,
+            'pct_2nd_won': serve_stats['2ndWon'] / max(svpt - in1st, 1) if (svpt - in1st) > 0 else 0.0,
+            'pct_bp_saved': serve_stats['bpSaved'] / max(serve_stats['bpFaced'], 1) if serve_stats['bpFaced'] > 0 else 0.0,
             'ace_per_match': serve_stats['ace'],
             'df_per_match': serve_stats['df'],
         }
@@ -678,15 +699,19 @@ def precompute_player_stats_ml_complete(df):
         fatigue = 0
         days_since_last = 30
         
-        if 'tourney_date' in df.columns and len(player_matches) > 0:
-            last_date = player_matches['tourney_date'].iloc[-1]
-            today = pd.Timestamp.now()
-            days_since_last = (today - pd.to_datetime(last_date)).days
-            
-            # Matchs dans les 7 derniers jours
-            week_ago = last_date - pd.Timedelta(days=7)
-            recent_matches = player_matches[player_matches['tourney_date'] >= week_ago]
-            fatigue = len(recent_matches)
+        if 'tourney_date' in player_matches.columns and len(player_matches) > 0:
+            try:
+                last_date = player_matches['tourney_date'].iloc[-1]
+                today = pd.Timestamp.now()
+                days_since_last = (today - pd.to_datetime(last_date)).days
+                
+                # Matchs dans les 7 derniers jours
+                week_ago = last_date - pd.Timedelta(days=7)
+                recent_matches = player_matches[player_matches['tourney_date'] >= week_ago]
+                fatigue = len(recent_matches)
+            except:
+                fatigue = 0
+                days_since_last = 30
         
         stats[player] = {
             'rank': rank,
@@ -806,6 +831,9 @@ def prepare_training_data_complete(df, player_stats):
             winner = str(row['winner_name']).strip()
             loser = str(row['loser_name']).strip()
             
+            if not winner or not loser or winner == 'nan' or loser == 'nan':
+                continue
+            
             # Surface et niveau
             surface = str(row.get('surface', 'Hard'))
             level = str(row.get('tourney_level', 'A'))
@@ -920,12 +948,12 @@ def train_ml_model_complete(df):
     
     # RandomForest optimisé
     rf = RandomForestClassifier(
-        n_estimators=200,           # Plus d'arbres = meilleure précision
-        max_depth=12,                # Profondeur limitée pour éviter l'overfitting
-        min_samples_split=15,        # Échantillons minimum pour split
-        min_samples_leaf=8,          # Échantillons minimum par feuille
-        max_features='sqrt',         # sqrt(n_features) à chaque split
-        n_jobs=-1,                    # Utiliser tous les CPU
+        n_estimators=200,
+        max_depth=12,
+        min_samples_split=15,
+        min_samples_leaf=8,
+        max_features='sqrt',
+        n_jobs=-1,
         random_state=42,
         class_weight='balanced'
     )
@@ -1035,7 +1063,6 @@ def load_atp_data():
                     except: 
                         continue
             if df is not None and 'winner_name' in df.columns and 'loser_name' in df.columns:
-                # S'assurer que les dates sont au bon format
                 if 'tourney_date' in df.columns:
                     df['tourney_date'] = pd.to_datetime(df['tourney_date'], errors='coerce')
                 atp_dfs.append(df)
@@ -1089,7 +1116,6 @@ def get_h2h_stats(df, player1, player2):
 def calculate_probability(df, player1, player2, surface, h2h=None, model_info=None, player_stats=None):
     """Calcule la probabilité avec ou sans ML"""
     if model_info is not None and player_stats is not None:
-        # Calculer le ratio H2H pour le modèle ML
         h2h_ratio = 0.5
         if h2h and h2h.get('total_matches', 0) > 0:
             wins1 = h2h.get(f'{player1}_wins', 0)
