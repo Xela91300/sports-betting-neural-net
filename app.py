@@ -996,7 +996,10 @@ def show_prediction():
                 st.caption(f"Confiance: {conf_color} {confidence:.0f}/100")
             with col3:
                 if h2h:
-                    st.caption(f"H2H: {h2h.get(f'{match['player1']}_wins', 0)}-{h2h.get(f'{match['player2']}_wins', 0)}")
+                    # CORRECTION ICI - Éviter les f-strings imbriquées
+                    wins1 = h2h.get(f"{match['player1']}_wins", 0)
+                    wins2 = h2h.get(f"{match['player2']}_wins", 0)
+                    st.caption(f"H2H: {wins1}-{wins2}")
             
             if best_value:
                 st.success(f"🎯 Value bet! {best_value['joueur']} @ {best_value['cote']:.2f} (edge: {best_value['edge']*100:+.1f}%)")
