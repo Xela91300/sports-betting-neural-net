@@ -75,17 +75,28 @@ def send_telegram_message_requests(message, parse_mode='HTML'):
         return False
 
 def send_telegram_message(message, parse_mode='HTML'):
-    if TELEGRAM_AVAILABLE:
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(send_telegram_message_async(message, parse_mode))
-            loop.close()
-            if result:
-                return True
-        except:
-            pass
-    return send_telegram_message_requests(message, parse_mode)
+    """Envoi Telegram via requests direct — simple et fiable."""
+    token, chat_id = get_telegram_config()
+    if not token or not chat_id:
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': parse_mode,
+            'disable_web_page_preview': True
+        }
+        response = requests.post(url, json=payload, timeout=15)
+        if response.status_code == 200:
+            return True
+        else:
+            # Log l'erreur Telegram pour debug
+            print(f"Telegram error {response.status_code}: {response.text}")
+            return False
+    except Exception as e:
+        print(f"Erreur Telegram: {e}")
+        return False
 
 def format_prediction_message(pred_data, ai_comment=None):
     emoji_map = {'Hard': '🟦', 'Clay': '🟧', 'Grass': '🟩'}
@@ -210,9 +221,18 @@ def send_stats_to_telegram():
 
 def test_telegram_connection():
     token, chat_id = get_telegram_config()
-    if not token or not chat_id:
-        return False, "❌ Configuration Telegram manquante"
-    test_message = f"""
+    if not token:
+        return False, "❌ TELEGRAM_BOT_TOKEN manquant dans les secrets"
+    if not chat_id:
+        return False, "❌ TELEGRAM_CHAT_ID manquant dans les secrets"
+    try:
+        # Vérifie d'abord que le bot est valide
+        info_url = f"https://api.telegram.org/bot{token}/getMe"
+        info_resp = requests.get(info_url, timeout=10)
+        if info_resp.status_code != 200:
+            return False, f"❌ Token invalide : {info_resp.json().get('description', 'Erreur inconnue')}"
+
+        test_message = f"""
 <b>🔧 TEST DE CONNEXION RÉUSSI!</b>
 
 ✅ Bot configuré
@@ -221,10 +241,16 @@ def test_telegram_connection():
 
 #TennisIQ #Test
 """
-    if send_telegram_message(test_message):
-        return True, "✅ Connexion réussie ! Message de test envoyé."
-    else:
-        return False, "❌ Échec de l'envoi. Vérifie ton token et chat_id"
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {'chat_id': chat_id, 'text': test_message, 'parse_mode': 'HTML', 'disable_web_page_preview': True}
+        resp = requests.post(url, json=payload, timeout=15)
+        if resp.status_code == 200:
+            return True, "✅ Connexion réussie ! Message de test envoyé."
+        else:
+            err = resp.json().get('description', 'Erreur inconnue')
+            return False, f"❌ Erreur API Telegram : {err} (chat_id: {chat_id})"
+    except Exception as e:
+        return False, f"❌ Exception : {str(e)}"
 
 def send_custom_message():
     st.markdown("### 📝 Message personnalisé")
@@ -456,58 +482,63 @@ def create_progress_bar(value):
     """
 
 # ─────────────────────────────────────────────────────────────
-# FIX PRINCIPAL : create_result_card retourne du HTML pur
-# Utilise render_result_card() pour l'afficher → unsafe_allow_html garanti
+# CARTE RÉSULTAT — 100% composants Streamlit natifs
+# Zéro HTML custom → zéro problème unsafe_allow_html
 # ─────────────────────────────────────────────────────────────
-def create_result_card(player1, player2, proba, confidence):
+def render_result_card(player1, player2, proba, confidence):
+    """Carte résultat entièrement en composants Streamlit natifs."""
     favori = player1 if proba >= 0.5 else player2
 
     if confidence >= 70:
-        conf_color = COLORS['success']
-        conf_text = "🔋 CONFIANCE ÉLEVÉE"
+        conf_icon = "🟢"
+        conf_text = "CONFIANCE ÉLEVÉE"
     elif confidence >= 50:
-        conf_color = COLORS['warning']
-        conf_text = "⚡ CONFIANCE MODÉRÉE"
+        conf_icon = "🟡"
+        conf_text = "CONFIANCE MODÉRÉE"
     else:
-        conf_color = COLORS['danger']
-        conf_text = "⚠️ CONFIANCE FAIBLE"
+        conf_icon = "🔴"
+        conf_text = "CONFIANCE FAIBLE"
 
-    progress_html = f"""
-    <div class="progress-bar">
-        <div class="progress-fill" style="width: {proba*100:.1f}%;"></div>
-    </div>
-    """
+    # Bordure colorée via HTML minimal — une seule balise simple
+    st.markdown(
+        '<div style="border:2px solid #00DFA2; border-radius:20px; padding:1.5rem; margin:1rem 0;">',
+        unsafe_allow_html=True
+    )
 
-    return f"""
-    <div class="result-card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
-            <div style="text-align: center; flex: 1;">
-                <div style="font-size: 1.5rem; color: #fff;">{player1}</div>
-                <div style="font-size: 2.5rem; font-weight: 800; color: {COLORS['primary'] if proba >= 0.5 else COLORS['gray']};">{proba:.1%}</div>
-            </div>
-            <div style="font-size: 2rem; color: {COLORS['gray']};">VS</div>
-            <div style="text-align: center; flex: 1;">
-                <div style="font-size: 1.5rem; color: #fff;">{player2}</div>
-                <div style="font-size: 2.5rem; font-weight: 800; color: {COLORS['primary'] if proba < 0.5 else COLORS['gray']};">{1-proba:.1%}</div>
-            </div>
-        </div>
-        {progress_html}
-        <div style="display: flex; justify-content: space-between; margin-top: 1rem;">
-            <div style="text-align: left;">
-                <div style="color: {COLORS['gray']};">Favori</div>
-                <div style="font-size: 1.2rem; font-weight: 700; color: {COLORS['primary']};">{favori}</div>
-            </div>
-            <div style="text-align: right;">
-                <div style="color: {COLORS['gray']};">Confiance</div>
-                <div style="font-size: 1.2rem; font-weight: 700; color: {conf_color};">{conf_text}</div>
-            </div>
-        </div>
-    </div>
-    """
+    # Ligne joueurs + probas
+    c1, c_vs, c2 = st.columns([5, 1, 5])
+    with c1:
+        color1 = "#00DFA2" if proba >= 0.5 else "#6C7A89"
+        st.markdown(
+            f'<div style="text-align:center;"><div style="font-size:1.2rem;font-weight:600;color:#fff;">{player1}</div>'
+            f'<div style="font-size:2.5rem;font-weight:800;color:{color1};">{proba:.1%}</div></div>',
+            unsafe_allow_html=True
+        )
+    with c_vs:
+        st.markdown(
+            '<div style="text-align:center;font-size:1.5rem;color:#6C7A89;padding-top:1rem;">VS</div>',
+            unsafe_allow_html=True
+        )
+    with c2:
+        color2 = "#00DFA2" if proba < 0.5 else "#6C7A89"
+        st.markdown(
+            f'<div style="text-align:center;"><div style="font-size:1.2rem;font-weight:600;color:#fff;">{player2}</div>'
+            f'<div style="font-size:2.5rem;font-weight:800;color:{color2};">{1-proba:.1%}</div></div>',
+            unsafe_allow_html=True
+        )
 
-def render_result_card(player1, player2, proba, confidence):
-    """Wrapper qui garantit toujours unsafe_allow_html=True"""
-    st.markdown(create_result_card(player1, player2, proba, confidence), unsafe_allow_html=True)
+    # Barre de progression native Streamlit
+    st.progress(float(proba))
+
+    # Ligne favori / confiance
+    cf1, cf2 = st.columns(2)
+    with cf1:
+        st.markdown(f"**Favori** : 🎾 {favori}")
+    with cf2:
+        st.markdown(f"**Confiance** : {conf_icon} {conf_text} ({confidence:.0f}/100)")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
 def render_metric(label, value, unit="", color="#FFFFFF"):
     """Wrapper metric avec unsafe_allow_html garanti"""
@@ -519,7 +550,7 @@ def render_badge(text, color="#00DFA2"):
 
 def render_progress_bar(value):
     """Wrapper progress bar avec unsafe_allow_html garanti"""
-    st.markdown(create_progress_bar(value), unsafe_allow_html=True)
+    st.progress(float(value))
 
 # ─────────────────────────────────────────────────────────────
 # FONCTION DE CHARGEMENT DU MODÈLE PRÉ-ENTRAÎNÉ
@@ -1069,10 +1100,15 @@ def show_predictions(atp_data):
                     if send_tg:
                         with st.spinner("📤 Envoi sur Telegram..."):
                             ai_comment = st.session_state.get('last_ai') if send_ai else None
-                            if send_prediction_to_telegram(pred_data, ai_comment):
-                                st.success("📱 Prédiction envoyée sur Telegram !")
+                            token, chat_id = get_telegram_config()
+                            if not token or not chat_id:
+                                st.error("❌ Telegram non configuré : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant dans les secrets.")
                             else:
-                                st.error("❌ Échec de l'envoi Telegram. Vérifie la configuration.")
+                                result = send_prediction_to_telegram(pred_data, ai_comment)
+                                if result:
+                                    st.success("📱 Prédiction envoyée sur Telegram !")
+                                else:
+                                    st.error("❌ Échec Telegram. Vérifie que ton bot est admin dans le chat et que le chat_id est correct.")
                 else:
                     st.error("❌ Erreur lors de la sauvegarde dans l'historique")
 
