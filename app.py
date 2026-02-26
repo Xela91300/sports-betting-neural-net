@@ -451,7 +451,7 @@ def handle_telegram_command(text):
         p2 = parts[2].title()
         surface = parts[3].title() if len(parts) > 3 else "Hard"
         
-        proba, _ = calculate_probability(p1, p2, surface, None, None)
+        proba, _ = calculate_probability(p1, p2, surface, None, load_saved_model())
         pred_data = {
             'player1': p1, 'player2': p2,
             'surface': surface, 'proba': proba,
@@ -588,8 +588,31 @@ def load_saved_model():
         try:
             model_info = joblib.load(model_path)
             return model_info
-        except:
+        except Exception as e:
+            st.error(f"Erreur chargement modèle: {e}")
             return None
+    else:
+        # Essayer de télécharger depuis GitHub
+        try:
+            with st.spinner("📥 Téléchargement du modèle depuis GitHub..."):
+                url = "https://github.com/Xela91300/sports-betting-neural-net/releases/download/v1.0.0/tennis_ml_model_complete.pkl.gz"
+                response = requests.get(url, timeout=60)
+                
+                if response.status_code == 200:
+                    temp_path = MODELS_DIR / "model_temp.pkl.gz"
+                    with open(temp_path, "wb") as f:
+                        f.write(response.content)
+                    
+                    with gzip.open(temp_path, "rb") as f:
+                        model_info = joblib.load(f)
+                    
+                    joblib.dump(model_info, model_path)
+                    temp_path.unlink()
+                    st.success("✅ Modèle téléchargé depuis GitHub!")
+                    return model_info
+        except Exception as e:
+            st.warning(f"⚠️ Impossible de télécharger le modèle: {e}")
+    
     return None
 
 def predict_with_ml_model(model_info, player1, player2, surface='Hard'):
@@ -631,7 +654,8 @@ def predict_with_ml_model(model_info, player1, player2, surface='Hard'):
         proba = model.predict_proba(features_scaled)[0][1]
         
         return max(0.05, min(0.95, float(proba)))
-    except:
+    except Exception as e:
+        st.error(f"Erreur prédiction ML: {e}")
         return None
 
 # ─────────────────────────────────────────────────────────────
@@ -742,16 +766,28 @@ def get_h2h_stats(player1, player2):
     }
 
 def calculate_probability(player1, player2, surface, h2h=None, model_info=None):
-    """Calcule la probabilité"""
+    """Calcule la probabilité - Version simplifiée qui fonctionne même sans ML"""
+    
+    # Essayer d'abord avec le modèle ML si disponible
     if model_info:
         ml_proba = predict_with_ml_model(model_info, player1, player2, surface)
         if ml_proba is not None:
             return ml_proba, True
     
+    # Fallback sur une estimation simple
     proba = 0.5
+    
+    # Ajustement basé sur H2H si disponible
     if h2h and h2h.get('total_matches', 0) > 0:
         wins1 = h2h.get(f'{player1}_wins', 0)
         proba += (wins1 / h2h['total_matches'] - 0.5) * 0.2
+    
+    # Ajustement basé sur le nom (simulation - à remplacer par de vraies stats)
+    top_players = ["Novak Djokovic", "Rafael Nadal", "Roger Federer", "Carlos Alcaraz", "Jannik Sinner"]
+    if player1 in top_players and player2 not in top_players:
+        proba += 0.1
+    elif player2 in top_players and player1 not in top_players:
+        proba -= 0.1
     
     return max(0.05, min(0.95, proba)), False
 
@@ -774,20 +810,23 @@ def calculate_global_accuracy():
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def scrape_daily_matches():
-    """Simule la récupération des matchs du jour"""
-    # Simulation pour l'exemple
+    """Récupère les matchs du jour - Version améliorée"""
+    # Simulation avec plus de matchs récents
     today_matches = [
         {'p1': 'Novak Djokovic', 'p2': 'Carlos Alcaraz', 'surface': 'Clay', 'tournament': 'Roland Garros'},
         {'p1': 'Jannik Sinner', 'p2': 'Daniil Medvedev', 'surface': 'Hard', 'tournament': 'Miami Open'},
         {'p1': 'Rafael Nadal', 'p2': 'Stefanos Tsitsipas', 'surface': 'Clay', 'tournament': 'Barcelona Open'},
         {'p1': 'Alexander Zverev', 'p2': 'Andrey Rublev', 'surface': 'Hard', 'tournament': 'Madrid Open'},
         {'p1': 'Holger Rune', 'p2': 'Casper Ruud', 'surface': 'Grass', 'tournament': 'Wimbledon'},
+        {'p1': 'Daniil Medvedev', 'p2': 'Andrey Rublev', 'surface': 'Hard', 'tournament': 'Miami Open'},
+        {'p1': 'Stefanos Tsitsipas', 'p2': 'Holger Rune', 'surface': 'Clay', 'tournament': 'Monte-Carlo'},
+        {'p1': 'Casper Ruud', 'p2': 'Alexander Zverev', 'surface': 'Clay', 'tournament': 'Rome Masters'},
     ]
     return today_matches
 
 def auto_load_today_matches():
     """Bouton pour charger automatiquement les matchs du jour"""
-    if st.button("📅 Charger les matchs du jour", use_container_width=True):
+    if st.button("📅 Charger les matchs du jour", use_container_width=True, key="load_today_matches"):
         with st.spinner("Récupération des matchs..."):
             matches = scrape_daily_matches()
             if matches:
@@ -802,11 +841,12 @@ def auto_load_today_matches():
 def scan_for_value_bets(matches):
     """Scanne une liste de matchs pour trouver des value bets"""
     value_bets = []
+    model_info = load_saved_model()
     
     for match in matches:
-        proba, _ = calculate_probability(match['p1'], match['p2'], match['surface'], None, None)
+        proba, _ = calculate_probability(match['p1'], match['p2'], match['surface'], None, model_info)
         
-        # Simuler des cotes
+        # Simuler des cotes réalistes
         odds1 = round(1/proba * (0.9 + 0.2*np.random.random()), 2)
         odds2 = round(1/(1-proba) * (0.9 + 0.2*np.random.random()), 2)
         
@@ -823,7 +863,8 @@ def scan_for_value_bets(matches):
                 'edge': edge1 * 100,
                 'cote': odds1,
                 'proba': proba,
-                'surface': match['surface']
+                'surface': match['surface'],
+                'tournament': match['tournament']
             })
         elif edge2 > MIN_EDGE_COMBINE:
             value_bets.append({
@@ -832,7 +873,8 @@ def scan_for_value_bets(matches):
                 'edge': edge2 * 100,
                 'cote': odds2,
                 'proba': 1-proba,
-                'surface': match['surface']
+                'surface': match['surface'],
+                'tournament': match['tournament']
             })
     
     return sorted(value_bets, key=lambda x: x['edge'], reverse=True)
@@ -900,7 +942,7 @@ def save_prediction(pred_data):
         pred_data['statut'] = 'en_attente'
         history.append(pred_data)
         with open(HIST_FILE, 'w', encoding='utf-8') as f:
-            json.dump(history[-1000:], f, indent=2)
+            json.dump(history[-1000:], f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
         st.error(f"Erreur sauvegarde: {e}")
@@ -915,7 +957,7 @@ def update_prediction_status(pred_id, new_status):
                 pred['date_maj'] = datetime.now().isoformat()
                 break
         with open(HIST_FILE, 'w', encoding='utf-8') as f:
-            json.dump(history, f, indent=2)
+            json.dump(history, f, indent=2, ensure_ascii=False)
         update_user_stats()
         return True
     except:
@@ -985,7 +1027,7 @@ def save_combine(combine_data):
         combine_data['statut'] = 'en_attente'
         combines.append(combine_data)
         with open(COMB_HIST_FILE, 'w', encoding='utf-8') as f:
-            json.dump(combines[-200:], f, indent=2)
+            json.dump(combines[-200:], f, indent=2, ensure_ascii=False)
         return True
     except:
         return False
@@ -1265,7 +1307,7 @@ def show_dashboard():
         if model_info:
             st.success(f"✅ Modèle ML ({model_info.get('accuracy', 0):.1%})")
         else:
-            st.warning("⚠️ Modèle ML non chargé")
+            st.warning("⚠️ Modèle ML non chargé (mode estimation simple actif)")
     with col2:
         st.success("✅ IA Groq" if groq_key else "⚠️ IA non configurée")
     with col3:
@@ -1285,22 +1327,22 @@ def show_prediction():
     # Option de chargement automatique
     col1, col2 = st.columns([1, 3])
     with col1:
-        auto_load = st.checkbox("📅 Auto-load matchs", value=True)
+        auto_load = st.checkbox("📅 Auto-load matchs", value=True, key="auto_load")
     with col2:
         if auto_load:
-            today_matches = auto_load_today_matches()
+            auto_load_today_matches()
     
     # Configuration
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         default_n = len(st.session_state.get('today_matches', [3]))
-        n_matches = st.number_input("Nombre de matchs", 1, MAX_MATCHES_ANALYSIS, value=default_n)
+        n_matches = st.number_input("Nombre de matchs", 1, MAX_MATCHES_ANALYSIS, value=default_n, key="n_matches")
     with col2:
-        mise = st.number_input("Mise (€)", 1.0, 1000.0, 10.0)
+        mise = st.number_input("Mise (€)", 1.0, 1000.0, 10.0, key="mise")
     with col3:
-        use_ai = st.checkbox("🤖 Analyser avec IA", True)
+        use_ai = st.checkbox("🤖 Analyser avec IA", True, key="use_ai")
     with col4:
-        send_tg = st.checkbox("📱 Envoyer Telegram", True)
+        send_tg = st.checkbox("📱 Envoyer Telegram", True, key="send_tg")
     
     # Saisie des matchs
     matches = []
@@ -1322,7 +1364,7 @@ def show_prediction():
             with col1:
                 p1 = player_selector(f"Joueur 1", all_players, key=f"p1_{i}", 
                                      default=default_p1)
-                odds1 = st.text_input(f"Cote {p1}", key=f"odds1_{i}", placeholder="1.75")
+                odds1 = st.text_input(f"Cote {p1}", key=f"odds1_{i}", placeholder="1.75", value="1.75" if i==0 else "")
             
             with col2:
                 if p1:
@@ -1331,7 +1373,7 @@ def show_prediction():
                                          default=default_p2)
                 else:
                     p2 = player_selector(f"Joueur 2", all_players, key=f"p2_{i}")
-                odds2 = st.text_input(f"Cote {p2}", key=f"odds2_{i}", placeholder="2.10")
+                odds2 = st.text_input(f"Cote {p2}", key=f"odds2_{i}", placeholder="2.10", value="2.10" if i==0 else "")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -1352,18 +1394,10 @@ def show_prediction():
                 'index': i
             })
     
-    # Scan des value bets avant analyse
-    if matches:
-        valid_matches = [{'p1': m['player1'], 'p2': m['player2'], 'surface': m['surface']} 
-                        for m in matches if m['player1'] and m['player2']]
-        if valid_matches:
-            value_bets = scan_for_value_bets(valid_matches)
-            if value_bets:
-                st.markdown("### 🎯 Value bets détectés")
-                for vb in value_bets[:3]:
-                    st.success(f"{vb['joueur']} @ {vb['cote']} (edge: +{vb['edge']:.1f}%)")
+    # Bouton d'analyse
+    analyze_button = st.button("🔍 Analyser tous les matchs", type="primary", use_container_width=True, key="analyze_button")
     
-    if st.button("🔍 Analyser tous les matchs", type="primary", use_container_width=True):
+    if analyze_button:
         valid_matches = [m for m in matches if m['player1'] and m['player2']]
         
         if not valid_matches:
@@ -1424,8 +1458,8 @@ def show_prediction():
                         best_value = {'joueur': match['player2'], 'edge': edge2, 'cote': o2, 'proba': 1-proba}
                         st.success(f"🎯 Value bet! {match['player2']} @ {o2} (edge: +{edge2*100:.1f}%)")
                         all_selections.append(best_value)
-                except:
-                    pass
+                except Exception as e:
+                    st.warning(f"Erreur de conversion des cotes: {e}")
             
             # Paris alternatifs
             bet_suggestions = generate_alternative_bets(match['player1'], match['player2'], 
@@ -1464,6 +1498,8 @@ def show_prediction():
             if send_tg:
                 if send_prediction_to_telegram(pred_data, bet_suggestions, ai_comment):
                     st.success("📱 Envoyé sur Telegram")
+                else:
+                    st.warning("⚠️ Échec envoi Telegram (vérifie la configuration)")
             
             matches_analysis.append(pred_data)
             st.divider()
@@ -1487,7 +1523,8 @@ def show_telegram():
         
         1. Va sur Telegram @BotFather
         2. Crée un bot avec `/newbot`
-        3. Ajoute dans les secrets Streamlit :
+        3. Copie le token fourni
+        4. Ajoute dans les secrets Streamlit :
         ```toml
         TELEGRAM_BOT_TOKEN = "ton_token"
         TELEGRAM_CHAT_ID = "ton_chat_id"
@@ -1586,7 +1623,7 @@ def show_configuration():
             st.cache_resource.clear()
             st.rerun()
     else:
-        st.warning("⚠️ Aucun modèle trouvé dans le dossier models/")
+        st.warning("⚠️ Aucun modèle trouvé dans le dossier models/ (mode estimation simple actif)")
     
     st.markdown("### 🧠 Intelligence Artificielle")
     if get_groq_key():
@@ -1656,7 +1693,7 @@ def main():
         auto_backup()
         st.session_state['last_backup'] = datetime.now()
     
-    # Sidebar avec menu simple (sans streamlit-option-menu)
+    # Sidebar avec menu simple
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; margin-bottom: 2rem;">
@@ -1673,7 +1710,8 @@ def main():
         page = st.radio(
             "Navigation",
             ["🏠 Dashboard", "🎯 Multi-matchs", "💎 Value Bets", "🏆 Badges", "📱 Telegram", "⚙️ Configuration"],
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            key="navigation"
         )
         
         st.divider()
