@@ -17,3 +17,5 @@ openpyxl
 python-telegram-bot
 nest_asyncio
 gunicorn
+lxml
+beautifulsoup4
