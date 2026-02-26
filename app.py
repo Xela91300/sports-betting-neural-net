@@ -291,13 +291,10 @@ def call_groq_api(prompt):
 # ML IMPORTS
 # ─────────────────────────────────────────────────────────────
 try:
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.ensemble import RandomForestClassifier
     from sklearn.preprocessing import StandardScaler
-    from sklearn.calibration import CalibratedClassifierCV, calibration_curve
-    from sklearn.metrics import (accuracy_score, roc_auc_score, brier_score_loss,
-                                  log_loss, confusion_matrix, classification_report)
-    from sklearn.model_selection import StratifiedKFold, TimeSeriesSplit
-    from sklearn.linear_model import LogisticRegression
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.metrics import accuracy_score, roc_auc_score, brier_score_loss
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -329,24 +326,13 @@ USER_STATS_FILE = HIST_DIR / "user_stats.json"
 
 # Features complètes du modèle ML (21 features)
 ML_FEATURES = [
-    # Ranking (3)
     "log_rank_ratio", "pts_diff_norm", "age_diff",
-    
-    # Surface (3)
     "surf_clay", "surf_grass", "surf_hard",
-    
-    # Tournoi (3)
     "level_gs", "level_m", "best_of_5",
-    
-    # Performances historiques (4)
     "surf_wr_diff", "career_wr_diff", "recent_form_diff", "h2h_ratio",
-    
-    # Statistiques de service (6)
     "ace_diff_norm", "df_diff_norm",
     "pct_1st_in_diff", "pct_1st_won_diff",
     "pct_2nd_won_diff", "pct_bp_saved_diff",
-    
-    # Fatigue et contexte (2)
     "days_since_last_diff", "fatigue_diff"
 ]
 
@@ -525,519 +511,125 @@ def create_result_card(player1, player2, proba, confidence):
     """
 
 # ─────────────────────────────────────────────────────────────
-# MODÈLE ML COMPLET ET OPTIMISÉ (CORRIGÉ)
+# FONCTION DE CHARGEMENT DU MODÈLE PRÉ-ENTRAÎNÉ
 # ─────────────────────────────────────────────────────────────
 
-def precompute_player_stats_ml_complete(df):
-    """
-    Calcule TOUTES les statistiques avancées pour chaque joueur :
-    - Win rate par surface
-    - Forme récente (20 derniers matchs)
-    - Statistiques de service moyennes
-    - Fatigue (nombre de matchs récents)
-    """
-    if df is None or df.empty:
-        return {}
-    
-    # S'assurer que les dates sont triées
-    if 'tourney_date' in df.columns:
-        df = df.sort_values('tourney_date').copy()
-    
-    # Nettoyer les noms
-    df['_w_name'] = df['winner_name'].astype(str).str.strip()
-    df['_l_name'] = df['loser_name'].astype(str).str.strip()
-    
-    all_players = set(df['_w_name'].unique()) | set(df['_l_name'].unique())
-    stats = {}
-    
-    total_players = len(all_players)
-    progress_text = st.empty()
-    
-    for idx, player in enumerate(all_players):
-        if idx % 100 == 0:
-            progress_text.text(f"🔄 Calcul des stats: {idx}/{total_players} joueurs...")
-        
-        if not player or player == 'nan' or player == '':
-            continue
-        
-        # Tous les matchs du joueur
-        w_mask = df['_w_name'] == player
-        l_mask = df['_l_name'] == player
-        wins_df = df[w_mask]
-        loss_df = df[l_mask]
-        
-        # Fusionner tous les matchs pour l'historique complet
-        player_matches = pd.concat([
-            wins_df.assign(_is_winner=1),
-            loss_df.assign(_is_winner=0)
-        ])
-        
-        if 'tourney_date' in player_matches.columns:
-            player_matches = player_matches.sort_values('tourney_date')
-        
-        if len(player_matches) == 0:
-            continue
-        
-        total = len(player_matches)
-        wins = len(wins_df)
-        
-        # ── Classement le plus récent ─────────────────────
-        rank = 500.0
-        rank_points = 0.0
-        age = 25.0
-        
-        # Classement
-        if len(wins_df) > 0 and 'winner_rank' in wins_df.columns:
-            r = wins_df['winner_rank'].dropna()
-            if len(r) > 0:
-                rank = float(r.iloc[-1])
-        if rank == 500.0 and len(loss_df) > 0 and 'loser_rank' in loss_df.columns:
-            r = loss_df['loser_rank'].dropna()
-            if len(r) > 0:
-                rank = float(r.iloc[-1])
-        
-        # Points ATP
-        if len(wins_df) > 0 and 'winner_rank_points' in wins_df.columns:
-            p = wins_df['winner_rank_points'].dropna()
-            if len(p) > 0:
-                try:
-                    rank_points = float(p.iloc[-1])
-                except:
-                    rank_points = 0.0
-        
-        # Âge
-        if len(wins_df) > 0 and 'winner_age' in wins_df.columns:
-            a = wins_df['winner_age'].dropna()
-            if len(a) > 0:
-                try:
-                    age = float(a.mean())
-                except:
-                    age = 25.0
-        if age == 25.0 and len(loss_df) > 0 and 'loser_age' in loss_df.columns:
-            a = loss_df['loser_age'].dropna()
-            if len(a) > 0:
-                try:
-                    age = float(a.mean())
-                except:
-                    age = 25.0
-        
-        # ── Win rates par surface ────────────────────────
-        surface_wr = {'Hard': 0.5, 'Clay': 0.5, 'Grass': 0.5}
-        surface_matches = {'Hard': 0, 'Clay': 0, 'Grass': 0}
-        
-        if 'surface' in player_matches.columns:
-            for surf in ['Hard', 'Clay', 'Grass']:
-                surf_matches = player_matches[player_matches['surface'] == surf]
-                if len(surf_matches) > 0:
-                    surf_wins = surf_matches['_is_winner'].sum()
-                    surface_wr[surf] = surf_wins / len(surf_matches)
-                    surface_matches[surf] = len(surf_matches)
-        
-        # ── Win rate carrière ───────────────────────────
-        career_wr = wins / total if total > 0 else 0.5
-        
-        # ── Forme récente (20 derniers matchs) ──────────
-        recent_form = 0.5
-        if len(player_matches) >= 5:
-            last_20 = player_matches.tail(20)
-            recent_form = last_20['_is_winner'].mean()
-        
-        # ── Statistiques de service moyennes ────────────
-        serve_stats = {
-            'ace': 0.0, 'df': 0.0, 'svpt': 100.0,
-            '1stIn': 0.0, '1stWon': 0.0, '2ndWon': 0.0,
-            'bpSaved': 0.0, 'bpFaced': 1.0
-        }
-        
-        serve_cols = {
-            'ace': ('w_ace', 'l_ace'),
-            'df': ('w_df', 'l_df'),
-            'svpt': ('w_svpt', 'l_svpt'),
-            '1stIn': ('w_1stIn', 'l_1stIn'),
-            '1stWon': ('w_1stWon', 'l_1stWon'),
-            '2ndWon': ('w_2ndWon', 'l_2ndWon'),
-            'bpSaved': ('w_bpSaved', 'l_bpSaved'),
-            'bpFaced': ('w_bpFaced', 'l_bpFaced'),
-        }
-        
-        for stat, (wc, lc) in serve_cols.items():
-            vals = []
-            if wc in df.columns:
-                w_vals = wins_df[wc].dropna()
-                if len(w_vals) > 0:
-                    vals.extend(w_vals.tolist())
-            if lc in df.columns:
-                l_vals = loss_df[lc].dropna()
-                if len(l_vals) > 0:
-                    vals.extend(l_vals.tolist())
+def load_saved_model():
+    """Charge le modèle pré-entraîné depuis le dossier models/"""
+    model_path = MODELS_DIR / "tennis_ml_model_complete.pkl"
+    if model_path.exists():
+        try:
+            st.info(f"📦 Chargement du modèle depuis {model_path}")
+            model_info = joblib.load(model_path)
             
-            if vals:
-                numeric_vals = []
-                for v in vals:
-                    try:
-                        if pd.notna(v):
-                            numeric_vals.append(float(v))
-                    except:
-                        continue
-                if numeric_vals:
-                    serve_stats[stat] = float(np.mean(numeric_vals))
-        
-        # Pourcentages de service
-        svpt = max(serve_stats['svpt'], 1)
-        in1st = serve_stats['1stIn']
-        
-        serve_pct = {
-            'pct_1st_in': in1st / svpt if svpt > 0 else 0.0,
-            'pct_1st_won': serve_stats['1stWon'] / max(in1st, 1) if in1st > 0 else 0.0,
-            'pct_2nd_won': serve_stats['2ndWon'] / max(svpt - in1st, 1) if (svpt - in1st) > 0 else 0.0,
-            'pct_bp_saved': serve_stats['bpSaved'] / max(serve_stats['bpFaced'], 1) if serve_stats['bpFaced'] > 0 else 0.0,
-            'ace_per_match': serve_stats['ace'],
-            'df_per_match': serve_stats['df'],
-        }
-        
-        # ── Fatigue (matchs dans les 7 derniers jours) ──
-        fatigue = 0
-        days_since_last = 30
-        
-        if 'tourney_date' in player_matches.columns and len(player_matches) > 0:
-            try:
-                last_date = player_matches['tourney_date'].iloc[-1]
-                today = pd.Timestamp.now()
-                days_since_last = (today - pd.to_datetime(last_date)).days
-                
-                # Matchs dans les 7 derniers jours
-                week_ago = last_date - pd.Timedelta(days=7)
-                recent_matches = player_matches[player_matches['tourney_date'] >= week_ago]
-                fatigue = len(recent_matches)
-            except:
-                fatigue = 0
-                days_since_last = 30
-        
-        stats[player] = {
-            'rank': rank,
-            'rank_points': rank_points,
-            'age': age,
-            'total_matches': total,
-            'wins': wins,
-            'losses': total - wins,
-            'win_rate': career_wr,
-            'recent_form': recent_form,
-            'surface_wr': surface_wr,
-            'surface_matches': surface_matches,
-            'serve_pct': serve_pct,
-            'serve_raw': serve_stats,
-            'fatigue': fatigue,
-            'days_since_last': days_since_last,
-        }
-    
-    progress_text.empty()
-    return stats
+            # Vérifier que le modèle contient les éléments nécessaires
+            required_keys = ['model', 'scaler', 'accuracy']
+            if all(key in model_info for key in required_keys):
+                st.success(f"✅ Modèle chargé avec succès ! Accuracy: {model_info.get('accuracy', 0):.1%}")
+                return model_info
+            else:
+                st.warning("⚠️ Modèle incomplet, utilisation du mode règles simples")
+                return None
+        except Exception as e:
+            st.warning(f"⚠️ Erreur lors du chargement du modèle: {e}")
+            return None
+    else:
+        st.info("ℹ️ Aucun modèle pré-entraîné trouvé. Utilisation du mode règles simples.")
+        return None
 
-def extract_features_complete(player_stats, p1, p2, surface, level='A', best_of=3, h2h_ratio=None):
-    """
-    Extrait le vecteur de features COMPLET pour un match
-    """
+# ─────────────────────────────────────────────────────────────
+# FONCTIONS ML POUR LES PRÉDICTIONS
+# ─────────────────────────────────────────────────────────────
+
+def extract_features_for_prediction(player_stats, p1, p2, surface, level='A', best_of=3, h2h_ratio=0.5):
+    """Extrait les features pour un match à partir des stats pré-calculées"""
     s1 = player_stats.get(p1, {})
     s2 = player_stats.get(p2, {})
     
-    # 1. Ranking features
+    # Ranking
     r1 = max(s1.get('rank', 500.0), 1.0)
     r2 = max(s2.get('rank', 500.0), 1.0)
     log_rank_ratio = np.log(r2 / r1)
     
-    p1_pts = s1.get('rank_points', 0.0)
-    p2_pts = s2.get('rank_points', 0.0)
-    pts_diff_norm = (p1_pts - p2_pts) / 5000.0
+    pts_diff = (s1.get('rank_points', 0) - s2.get('rank_points', 0)) / 5000.0
+    age_diff = s1.get('age', 25) - s2.get('age', 25)
     
-    a1 = s1.get('age', 25.0)
-    a2 = s2.get('age', 25.0)
-    age_diff = a1 - a2
-    
-    # 2. Surface features
+    # Surface
     surf_clay = 1.0 if surface == 'Clay' else 0.0
     surf_grass = 1.0 if surface == 'Grass' else 0.0
     surf_hard = 1.0 if surface == 'Hard' else 0.0
     
-    # 3. Tournament level
+    # Niveau
     level_gs = 1.0 if level == 'G' else 0.0
     level_m = 1.0 if level == 'M' else 0.0
     best_of_5 = 1.0 if best_of == 5 else 0.0
     
-    # 4. Performance features
-    surf_wr1 = s1.get('surface_wr', {}).get(surface, 0.5)
-    surf_wr2 = s2.get('surface_wr', {}).get(surface, 0.5)
-    surf_wr_diff = surf_wr1 - surf_wr2
-    
+    # Performances
+    surf_wr_diff = s1.get('surface_wr', {}).get(surface, 0.5) - s2.get('surface_wr', {}).get(surface, 0.5)
     career_wr_diff = s1.get('win_rate', 0.5) - s2.get('win_rate', 0.5)
-    
     recent_form_diff = s1.get('recent_form', 0.5) - s2.get('recent_form', 0.5)
     
-    # H2H ratio (passé en paramètre)
-    h2h_ratio = h2h_ratio if h2h_ratio is not None else 0.5
-    
-    # 5. Service stats
+    # Service
     sp1 = s1.get('serve_pct', {})
     sp2 = s2.get('serve_pct', {})
     sr1 = s1.get('serve_raw', {})
     sr2 = s2.get('serve_raw', {})
     
-    ace_diff_norm = (sr1.get('ace', 0) - sr2.get('ace', 0)) / 10.0
-    df_diff_norm = (sr1.get('df', 0) - sr2.get('df', 0)) / 5.0
+    ace_diff = (sr1.get('ace', 0) - sr2.get('ace', 0)) / 10.0
+    df_diff = (sr1.get('df', 0) - sr2.get('df', 0)) / 5.0
     
     pct_1st_in_diff = sp1.get('pct_1st_in', 0) - sp2.get('pct_1st_in', 0)
     pct_1st_won_diff = sp1.get('pct_1st_won', 0) - sp2.get('pct_1st_won', 0)
     pct_2nd_won_diff = sp1.get('pct_2nd_won', 0) - sp2.get('pct_2nd_won', 0)
     pct_bp_saved_diff = sp1.get('pct_bp_saved', 0) - sp2.get('pct_bp_saved', 0)
     
-    # 6. Fatigue features
-    days_since_last_diff = s1.get('days_since_last', 30) - s2.get('days_since_last', 30)
+    # Fatigue
+    days_diff = s1.get('days_since_last', 30) - s2.get('days_since_last', 30)
     fatigue_diff = s1.get('fatigue', 0) - s2.get('fatigue', 0)
     
-    features = [
-        log_rank_ratio, pts_diff_norm, age_diff,
+    return [
+        log_rank_ratio, pts_diff, age_diff,
         surf_clay, surf_grass, surf_hard,
         level_gs, level_m, best_of_5,
         surf_wr_diff, career_wr_diff, recent_form_diff, h2h_ratio,
-        ace_diff_norm, df_diff_norm,
+        ace_diff, df_diff,
         pct_1st_in_diff, pct_1st_won_diff, pct_2nd_won_diff, pct_bp_saved_diff,
-        days_since_last_diff, fatigue_diff
+        days_diff, fatigue_diff
     ]
-    
-    return np.array(features, dtype=np.float32)
 
-def prepare_training_data_complete(df, player_stats):
-    """
-    Prépare les données d'entraînement avec toutes les features
-    et split temporel pour éviter le leakage
-    """
-    if df is None or df.empty or not player_stats:
-        return None, None, None, None
-    
-    # Trier par date
-    if 'tourney_date' in df.columns:
-        df = df.sort_values('tourney_date').reset_index(drop=True)
-    
-    X_list, y_list, dates_list = [], [], []
-    
-    total_rows = len(df)
-    progress_text = st.empty()
-    
-    for idx, row in df.iterrows():
-        if idx % 1000 == 0:
-            progress_text.text(f"🔄 Préparation des données: {idx}/{total_rows} matchs...")
-        
-        try:
-            # Récupérer les joueurs
-            winner = str(row['winner_name']).strip()
-            loser = str(row['loser_name']).strip()
-            
-            if not winner or not loser or winner == 'nan' or loser == 'nan':
-                continue
-            
-            # Surface et niveau
-            surface = str(row.get('surface', 'Hard'))
-            level = str(row.get('tourney_level', 'A'))
-            best_of = float(row.get('best_of', 3))
-            
-            # Date du match (pour le split temporel)
-            match_date = row.get('tourney_date', None)
-            
-            # Statistiques des joueurs
-            s1 = player_stats.get(winner, {})
-            s2 = player_stats.get(loser, {})
-            
-            if not s1 or not s2:
-                continue
-            
-            # Calculer H2H jusqu'à cette date (pas de leakage)
-            h2h = 0.5
-            if 'winner_name' in df.columns and 'loser_name' in df.columns and match_date is not None:
-                # Matchs précédents seulement
-                past_matches = df.iloc[:idx]
-                h2h_mask = ((past_matches['winner_name'] == winner) & (past_matches['loser_name'] == loser)) | \
-                           ((past_matches['winner_name'] == loser) & (past_matches['loser_name'] == winner))
-                h2h_matches = past_matches[h2h_mask]
-                if len(h2h_matches) > 0:
-                    wins = len(h2h_matches[h2h_matches['winner_name'] == winner])
-                    h2h = wins / len(h2h_matches)
-            
-            # Features pour le vainqueur
-            feat_w = extract_features_complete(
-                player_stats, winner, loser, surface, level, best_of, h2h
-            )
-            
-            # Features pour le perdant (inversé)
-            feat_l = extract_features_complete(
-                player_stats, loser, winner, surface, level, best_of, 1 - h2h
-            )
-            
-            X_list.append(feat_w)
-            y_list.append(1)
-            dates_list.append(match_date)
-            
-            X_list.append(feat_l)
-            y_list.append(0)
-            dates_list.append(match_date)
-            
-        except Exception as e:
-            continue
-    
-    progress_text.empty()
-    
-    if len(X_list) < 2000:
-        return None, None, None, None
-    
-    X = np.array(X_list, dtype=np.float32)
-    y = np.array(y_list, dtype=np.int32)
-    dates = np.array(dates_list)
-    
-    return X, y, dates, df
-
-def train_ml_model_complete(df):
-    """
-    Entraîne le modèle ML complet avec :
-    - Toutes les features
-    - Split temporel
-    - Calibration isotonique
-    - Grid search simplifié
-    """
-    if not SKLEARN_AVAILABLE:
-        st.error("❌ scikit-learn non disponible. Installe avec: pip install scikit-learn")
-        return None
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    # Étape 1: Pré-calcul des stats joueurs
-    status_text.text("🔄 Étape 1/5: Calcul des statistiques joueurs...")
-    player_stats = precompute_player_stats_ml_complete(df)
-    progress_bar.progress(20)
-    
-    # Étape 2: Préparation des données
-    status_text.text("📊 Étape 2/5: Préparation des données d'entraînement...")
-    X, y, dates, _ = prepare_training_data_complete(df, player_stats)
-    progress_bar.progress(40)
-    
-    if X is None or len(X) < 2000:
-        status_text.empty()
-        progress_bar.empty()
-        st.error("❌ Pas assez de données (minimum 1000 matchs requis)")
-        return None
-    
-    # Étape 3: Split temporel (80% anciens, 20% récents)
-    status_text.text("⏱️ Étape 3/5: Split temporel des données...")
-    split_idx = int(len(X) * 0.8)
-    
-    X_train, X_test = X[:split_idx], X[split_idx:]
-    y_train, y_test = y[:split_idx], y[split_idx:]
-    
-    # Limiter pour la vitesse si nécessaire
-    if len(X_train) > 100000:
-        idx = np.random.choice(len(X_train), 100000, replace=False)
-        X_train = X_train[idx]
-        y_train = y_train[idx]
-    
-    progress_bar.progress(60)
-    
-    # Étape 4: Normalisation et entraînement
-    status_text.text("🤖 Étape 4/5: Entraînement du modèle RandomForest...")
-    
-    scaler = StandardScaler()
-    X_train_sc = scaler.fit_transform(X_train)
-    X_test_sc = scaler.transform(X_test)
-    
-    # RandomForest optimisé
-    rf = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=12,
-        min_samples_split=15,
-        min_samples_leaf=8,
-        max_features='sqrt',
-        n_jobs=-1,
-        random_state=42,
-        class_weight='balanced'
-    )
-    rf.fit(X_train_sc, y_train)
-    
-    # Calibration isotonique pour meilleures probabilités
-    calibrated = CalibratedClassifierCV(
-        RandomForestClassifier(
-            n_estimators=150,
-            max_depth=10,
-            min_samples_split=20,
-            min_samples_leaf=10,
-            n_jobs=-1,
-            random_state=42
-        ),
-        cv=3,
-        method='isotonic'
-    )
-    calibrated.fit(X_train_sc, y_train)
-    
-    progress_bar.progress(80)
-    
-    # Étape 5: Évaluation
-    status_text.text("📈 Étape 5/5: Évaluation du modèle...")
-    
-    y_pred = calibrated.predict(X_test_sc)
-    y_proba = calibrated.predict_proba(X_test_sc)[:, 1]
-    
-    accuracy = float(accuracy_score(y_test, y_pred))
-    auc = float(roc_auc_score(y_test, y_proba))
-    brier = float(brier_score_loss(y_test, y_proba))
-    
-    # Calcul du ROI simulé
-    roi_sims = []
-    for i in range(len(y_test)):
-        pred_win = y_proba[i] > 0.5
-        actual_win = y_test[i] == 1
-        roi_sims.append(1.0 if pred_win == actual_win else -1.0)
-    simulated_roi = float(np.mean(roi_sims))
-    
-    # Feature importance
-    feature_importance = dict(zip(ML_FEATURES, rf.feature_importances_.tolist()))
-    
-    progress_bar.progress(100)
-    status_text.empty()
-    progress_bar.empty()
-    
-    return {
-        'model': calibrated,
-        'rf_raw': rf,
-        'scaler': scaler,
-        'player_stats': player_stats,
-        'accuracy': accuracy,
-        'auc': auc,
-        'brier': brier,
-        'simulated_roi': simulated_roi,
-        'feature_importance': feature_importance,
-        'n_train': len(X_train),
-        'n_test': len(X_test),
-        'trained_at': datetime.now().isoformat(),
-    }
-
-def predict_with_ml_complete(model_info, player_stats, p1, p2, surface, level='A', best_of=3, h2h_ratio=None):
-    """
-    Prédit avec le modèle ML complet
-    """
+def predict_with_saved_model(model_info, player_stats, p1, p2, surface, level='A', best_of=3, h2h_ratio=0.5):
+    """Fait une prédiction avec le modèle sauvegardé"""
     if model_info is None or player_stats is None:
         return None
     
     try:
-        feat = extract_features_complete(
+        # Extraire les features
+        features = extract_features_for_prediction(
             player_stats, p1, p2, surface, level, best_of, h2h_ratio
         )
-        X = feat.reshape(1, -1)
-        X_sc = model_info['scaler'].transform(X)
-        proba = float(model_info['model'].predict_proba(X_sc)[0][1])
         
-        return max(0.05, min(0.95, proba))
+        # Mettre sous forme de tableau
+        X = np.array(features).reshape(1, -1)
+        
+        # Normaliser
+        scaler = model_info.get('scaler')
+        if scaler:
+            X = scaler.transform(X)
+        
+        # Prédire
+        model = model_info.get('model')
+        if model:
+            proba = float(model.predict_proba(X)[0][1])
+            return max(0.05, min(0.95, proba))
+        else:
+            return None
+            
     except Exception as e:
-        print(f"Erreur prédiction ML: {e}")
+        print(f"Erreur lors de la prédiction: {e}")
         return None
 
 # ─────────────────────────────────────────────────────────────
-# CHARGEMENT DONNÉES
+# CHARGEMENT DES DONNÉES
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_atp_data():
@@ -1115,19 +707,21 @@ def get_h2h_stats(df, player1, player2):
 
 def calculate_probability(df, player1, player2, surface, h2h=None, model_info=None, player_stats=None):
     """Calcule la probabilité avec ou sans ML"""
+    # Essayer d'utiliser le modèle ML d'abord
     if model_info is not None and player_stats is not None:
         h2h_ratio = 0.5
         if h2h and h2h.get('total_matches', 0) > 0:
             wins1 = h2h.get(f'{player1}_wins', 0)
             h2h_ratio = wins1 / h2h['total_matches']
         
-        ml_proba = predict_with_ml_complete(
+        ml_proba = predict_with_saved_model(
             model_info, player_stats, player1, player2, 
             surface, 'A', 3, h2h_ratio
         )
         if ml_proba is not None:
             return ml_proba
     
+    # Fallback sur les règles simples
     stats1 = get_player_stats(df, player1, surface)
     stats2 = get_player_stats(df, player2, surface)
     score = 0.5
@@ -1239,6 +833,17 @@ def main():
     with st.spinner("Chargement des données..."):
         atp_data = load_atp_data()
 
+    # Charger le modèle pré-entraîné
+    if 'ml_model' not in st.session_state:
+        st.session_state['ml_model'] = load_saved_model()
+    
+    # Si le modèle contient des stats joueurs, les charger aussi
+    if st.session_state['ml_model'] and 'player_stats' in st.session_state['ml_model']:
+        st.session_state['player_stats_cache'] = st.session_state['ml_model']['player_stats']
+        st.sidebar.markdown(create_badge(f"🤖 Modèle ML: {st.session_state['ml_model'].get('accuracy', 0):.1%}", COLORS['success']), unsafe_allow_html=True)
+    else:
+        st.session_state['player_stats_cache'] = {}
+
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; margin-bottom: 2rem;">
@@ -1318,138 +923,48 @@ def show_model_page(atp_data):
         st.error("⚠️ **scikit-learn non installé.** Exécutez : `pip install scikit-learn`")
         return
 
-    if atp_data.empty:
-        st.warning("Aucune donnée ATP disponible pour entraîner le modèle.")
-        return
-
     model_info = st.session_state.get('ml_model')
 
-    st.markdown("""
+    if model_info is None:
+        st.warning("📭 Aucun modèle pré-entraîné trouvé dans le dossier `models/`.")
+        st.info("""
+        **Comment obtenir le modèle :**
+        1. Exécute le notebook `TennisIQ_ML_Training_Full.ipynb` sur Google Colab
+        2. Le modèle sera automatiquement sauvegardé dans le dossier `models/`
+        3. Recharge cette page
+        """)
+        return
+
+    st.markdown(f"""
     <div class="model-card">
-        <h4>🧠 Architecture du modèle</h4>
+        <h4>🧠 Modèle actif</h4>
         <p>
-        RandomForest (200 arbres, profondeur max 12) + <strong>calibration isotonique</strong><br>
-        <strong>21 features</strong> : classement, âge, surface, niveau, best-of, win rate surface, 
-        win rate carrière, forme récente, H2H, stats de service (ace%, 1er service%, sauvegarde BP%), fatigue<br>
-        Split temporel 80/20 pour éviter le leakage. Données équilibrées (gagnant/perdant = 50/50).
+        ✅ Modèle chargé depuis <code>models/tennis_ml_model_complete.pkl</code><br>
+        📊 Précision: <strong>{model_info.get('accuracy', 0):.1%}</strong><br>
+        📅 Entraîné le: {model_info.get('trained_at', 'Inconnu')[:16]}<br>
+        📈 AUC-ROC: {model_info.get('auc', 0):.3f}<br>
+        🎯 Brier Score: {model_info.get('brier', 0):.3f}
         </p>
     </div>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        if model_info is None:
-            st.info("👆 Le modèle n'a pas encore été entraîné. Cliquez sur **Entraîner** pour démarrer.")
-            if st.button("🚀 Entraîner le modèle ML (complet)", use_container_width=True):
-                model_info = train_ml_model_complete(atp_data)
-                if model_info:
-                    st.session_state['ml_model'] = model_info
-                    st.session_state['player_stats_cache'] = model_info['player_stats']
-                    st.success(f"✅ Modèle entraîné avec succès ! Précision : **{model_info['accuracy']:.1%}**")
-                    st.rerun()
-                else:
-                    st.error("❌ Entraînement impossible (données insuffisantes ou colonnes manquantes).")
-        else:
-            st.success(f"✅ Modèle actif — entraîné le {model_info.get('trained_at', '')[:16]}")
-            col_r1, col_r2 = st.columns(2)
-            with col_r1:
-                if st.button("🔄 Ré-entraîner", use_container_width=True):
-                    model_info = train_ml_model_complete(atp_data)
-                    if model_info:
-                        st.session_state['ml_model'] = model_info
-                        st.success("✅ Modèle mis à jour !")
-                        st.rerun()
-            with col_r2:
-                if st.button("🗑️ Supprimer le modèle", use_container_width=True):
-                    st.session_state['ml_model'] = None
-                    st.rerun()
-
-    with col2:
-        if model_info:
-            acc_color = COLORS['success'] if model_info['accuracy'] >= 0.65 else COLORS['warning']
-            st.markdown(create_metric("Précision", f"{model_info['accuracy']:.1%}", "", acc_color), unsafe_allow_html=True)
-
-    if model_info is None:
-        return
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    acc = model_info['accuracy']
-    auc = model_info['auc']
-    brier = model_info.get('brier', 0.25)
-
-    with col1:
-        c = COLORS['success'] if acc >= 0.66 else COLORS['warning'] if acc >= 0.62 else COLORS['danger']
-        st.markdown(create_metric("Précision", f"{acc:.1%}", "", c), unsafe_allow_html=True)
-        st.caption("% de matchs correctement prédits")
-
-    with col2:
-        c = COLORS['success'] if auc >= 0.70 else COLORS['warning'] if auc >= 0.65 else COLORS['danger']
-        st.markdown(create_metric("AUC-ROC", f"{auc:.3f}", "", c), unsafe_allow_html=True)
-        st.caption("Discrimination (1.0 = parfait)")
-
-    with col3:
-        c = COLORS['success'] if brier <= 0.22 else COLORS['warning'] if brier <= 0.25 else COLORS['danger']
-        st.markdown(create_metric("Brier Score", f"{brier:.3f}", "", c), unsafe_allow_html=True)
-        st.caption("Calibration (0 = parfait)")
-
-    with col4:
-        roi = model_info.get('simulated_roi', 0)
-        c = COLORS['success'] if roi > 0 else COLORS['danger']
-        st.markdown(create_metric("ROI simulé", f"{roi:+.1%}", "", c), unsafe_allow_html=True)
-        st.caption("Si mise 1€ sur favori")
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    
     # Feature importance
-    st.markdown("<h3>🎯 Importance des features</h3>", unsafe_allow_html=True)
-    
-    feat_imp = model_info.get('feature_importance', {})
-    if feat_imp:
+    if 'feature_importance' in model_info:
+        st.markdown("<h3>🎯 Importance des features</h3>", unsafe_allow_html=True)
+        feat_imp = model_info['feature_importance']
         feat_df = pd.DataFrame(list(feat_imp.items()), columns=['Feature', 'Importance'])
         feat_df = feat_df.sort_values('Importance', ascending=False)
         
-        labels_fr = {
-            'log_rank_ratio': '📊 Ratio classement',
-            'pts_diff_norm': '🏆 Différence points',
-            'age_diff': '🎂 Différence âge',
-            'surf_clay': '🟧 Terre battue',
-            'surf_grass': '🟩 Gazon',
-            'surf_hard': '🟦 Dur',
-            'level_gs': '🏆 Grand Chelem',
-            'level_m': '🥇 Masters 1000',
-            'best_of_5': '5️⃣ Best of 5',
-            'surf_wr_diff': '📈 Win rate surface',
-            'career_wr_diff': '📊 Win rate carrière',
-            'recent_form_diff': '⚡ Forme récente',
-            'h2h_ratio': '🤼 Face à face',
-            'ace_diff_norm': '⚡ Aces',
-            'df_diff_norm': '💥 Doubles fautes',
-            'pct_1st_in_diff': '🎯 1er service',
-            'pct_1st_won_diff': '🎾 Points 1er service',
-            'pct_2nd_won_diff': '🎾 Points 2ème service',
-            'pct_bp_saved_diff': '🛡️ BP sauvées',
-            'days_since_last_diff': '📅 Repos',
-            'fatigue_diff': '😓 Fatigue',
-        }
-        
-        for _, row in feat_df.iterrows():
-            feat_name = row['Feature']
+        for _, row in feat_df.head(10).iterrows():
             imp_pct = row['Importance']
-            label = labels_fr.get(feat_name, feat_name)
-            bar_color = COLORS['primary'] if imp_pct > 0.05 else COLORS['gray']
-            
             st.markdown(f"""
             <div style="margin: 0.5rem 0;">
                 <div style="display: flex; justify-content: space-between;">
-                    <span style="color: #fff;">{label}</span>
-                    <span style="color: {bar_color};">{imp_pct:.1%}</span>
+                    <span style="color: #fff;">{row['Feature']}</span>
+                    <span style="color: {COLORS['primary']};">{imp_pct:.1%}</span>
                 </div>
                 <div style="background: rgba(255,255,255,0.1); height: 8px; border-radius: 4px;">
-                    <div style="width: {imp_pct*200}%; height: 100%; background: {bar_color}; border-radius: 4px;"></div>
+                    <div style="width: {imp_pct*200}%; height: 100%; background: {COLORS['primary']}; border-radius: 4px;"></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
