@@ -70,12 +70,21 @@ ACHIEVEMENTS = {
     'surface_specialist': {'name': '🌍 Spécialiste surface', 'desc': 'Gagnant sur les 3 surfaces', 'icon': '🌍'},
 }
 
-# Base de données des tournois
+# ─────────────────────────────────────────────────────────────
+# BASE DE DONNÉES COMPLÈTE DES TOURNOIS (190+ tournois)
+# ─────────────────────────────────────────────────────────────
 TOURNAMENTS_DB = {
+    # GRAND CHELEM
     "Australian Open": "Hard",
     "Roland Garros": "Clay",
     "Wimbledon": "Grass",
     "US Open": "Hard",
+    
+    # ATP FINALS
+    "Nitto ATP Finals": "Hard",
+    "Next Gen ATP Finals": "Hard",
+    
+    # ATP MASTERS 1000
     "Indian Wells Masters": "Hard",
     "Miami Open": "Hard",
     "Monte-Carlo Masters": "Clay",
@@ -85,7 +94,10 @@ TOURNAMENTS_DB = {
     "Cincinnati Masters": "Hard",
     "Shanghai Masters": "Hard",
     "Paris Masters": "Hard",
+    
+    # ATP 500
     "Rotterdam Open": "Hard",
+    "Rio Open": "Clay",
     "Dubai Tennis Championships": "Hard",
     "Mexican Open": "Hard",
     "Barcelona Open": "Clay",
@@ -93,12 +105,242 @@ TOURNAMENTS_DB = {
     "Queen's Club Championships": "Grass",
     "Hamburg Open": "Clay",
     "Washington Open": "Hard",
+    "China Open": "Hard",
     "Japan Open": "Hard",
     "Vienna Open": "Hard",
     "Swiss Indoors": "Hard",
-    "China Open": "Hard",
-    "Nitto ATP Finals": "Hard",
+    "Dallas Open": "Hard",
+    "Qatar Open": "Hard",
+    "St. Petersburg Open": "Hard",
+    "Astana Open": "Hard",
+    "European Open": "Hard",
+    "Croatia Open": "Clay",
+    "Swedish Open": "Clay",
+    "Swiss Open": "Clay",
+    "Moselle Open": "Hard",
+    "Tel Aviv Open": "Hard",
+    "Korea Open": "Hard",
+    "Zhuhai Open": "Hard",
+    "Chengdu Open": "Hard",
+    
+    # ATP 250 - JANVIER
+    "Adelaide International": "Hard",
+    "Auckland Open": "Hard",
+    "Brisbane International": "Hard",
+    "Hong Kong Open": "Hard",
+    "Maharashtra Open": "Hard",
+    
+    # ATP 250 - FÉVRIER
+    "Cordoba Open": "Clay",
+    "Buenos Aires": "Clay",
+    "Delray Beach": "Hard",
+    "Marseille Open": "Hard",
+    "Chile Open": "Clay",
+    "Qatar ExxonMobil Open": "Hard",
+    
+    # ATP 250 - MARS/AVRIL
+    "Santiago": "Clay",
+    "Houston": "Clay",
+    "Marrakech": "Clay",
+    "Estoril": "Clay",
+    "Munich": "Clay",
+    "Geneva": "Clay",
+    "Lyon": "Clay",
+    "Grand Prix Hassan II": "Clay",
+    "U.S. Men's Clay Court Championship": "Clay",
+    "BMW Open": "Clay",
+    "Millennium Estoril Open": "Clay",
+    "Srpska Open": "Clay",
+    "Banja Luka": "Clay",
+    
+    # ATP 250 - JUIN
+    "Stuttgart": "Grass",
+    "'s-Hertogenbosch": "Grass",
+    "Mallorca": "Grass",
+    "Eastbourne": "Grass",
+    "BOSS Open": "Grass",
+    "Libéma Open": "Grass",
+    "Rothesay International": "Grass",
+    "MercedesCup": "Grass",
+    "Fever-Tree Championships": "Grass",
+    "Gerry Weber Open": "Grass",
+    "Nature Valley International": "Grass",
+    
+    # ATP 250 - JUILLET
+    "Newport": "Grass",
+    "Atlanta": "Hard",
+    "Croatia Open Umag": "Clay",
+    "Nordea Open": "Clay",
+    "EFO Swiss Open Gstaad": "Clay",
+    "Plava Laguna Croatia Open": "Clay",
+    "Hall of Fame Open": "Grass",
+    "Atlanta Open": "Hard",
+    
+    # ATP 250 - AOÛT
+    "Kitzbühel": "Clay",
+    "Los Cabos": "Hard",
+    "Winston-Salem": "Hard",
+    "Winston-Salem Open": "Hard",
+    "Western & Southern Open": "Hard",
+    
+    # ATP 250 - SEPTEMBRE
+    "Chengdu Open": "Hard",
+    "Zhuhai Championships": "Hard",
+    "Sofia": "Hard",
+    "Metz": "Hard",
+    "San Diego": "Hard",
+    "Seoul": "Hard",
+    "Tel Aviv": "Hard",
+    "Kremlin Cup": "Hard",
+    
+    # ATP 250 - OCTOBRE
+    "Florence": "Hard",
+    "Gijon": "Hard",
+    "Antwerp": "Hard",
+    "Stockholm": "Hard",
+    "Naples": "Hard",
+    "Bratislava": "Hard",
+    "Helsinki": "Hard",
+    "Stockholm Open": "Hard",
+    "European Open": "Hard",
+    "Erste Bank Open": "Hard",
+    "Swiss Indoors Basel": "Hard",
+    
+    # ATP 250 - NOVEMBRE
+    "Moselle Open": "Hard",
+    "Belgrade Open": "Hard",
+    "Paris Rolex Paris Masters": "Hard",
+    "Next Gen ATP Finals": "Hard",
+    
+    # DAVIS CUP & LA CUP
+    "Davis Cup": "Hard",
+    "Laver Cup": "Hard",
+    "United Cup": "Hard",
+    
+    # AUTRES TOURNOIS HISTORIQUES
+    "ASB Classic": "Hard",
+    "Movistar Chile Open": "Clay",
+    "Argentina Open": "Clay",
+    "Ecuador Open": "Clay",
+    "Hungarian Open": "Clay",
+    "Portugal Open": "Clay",
+    "Pacific Coast Championships": "Hard",
+    "U.S. Pro Indoor": "Hard",
+    "Richmond WCT": "Hard",
+    "Omaha": "Hard",
+    "Hampton": "Hard",
+    "Birmingham WCT": "Hard",
+    "Cologne WCT": "Hard",
+    "Chicago": "Hard",
+    "Los Angeles": "Hard",
+    "Fairfield": "Hard",
+    "Johannesburg WCT": "Hard",
+    "Las Vegas": "Hard",
+    "St. Louis WCT": "Hard",
+    "Denver": "Hard",
+    "Miami WCT": "Hard",
+    "Fort Worth": "Hard",
+    "Montreal WCT": "Hard",
+    "Brussels": "Clay",
+    "Båstad": "Clay",
+    "Düsseldorf": "Clay",
+    "Hamburg": "Clay",
+    "Stuttgart Outdoor": "Clay",
+    "Gstaad": "Clay",
+    "Hilversum": "Clay",
+    "Bournemouth": "Clay",
+    "Berlin": "Hard",
+    "Cologne": "Hard",
+    "Copenhagen": "Hard",
+    "Oslo": "Hard",
+    "Brescia": "Hard",
+    "Dortmund": "Hard",
+    "Munich WCT": "Hard",
+    "Brussels WCT": "Hard",
+    "Rotterdam WCT": "Hard",
+    "Salisbury": "Hard",
+    "Toronto WCT": "Hard",
+    "Johannesburg": "Hard",
+    "Washington WCT": "Hard",
+    "Houston WCT": "Clay",
+    "River Oaks": "Clay",
+    "Charlotte WCT": "Clay",
+    "St. Louis": "Clay",
+    "New Orleans": "Clay",
+    "Indianapolis": "Clay",
+    "Cincinnati": "Hard",
+    "Louisville": "Clay",
+    "Columbus": "Hard",
+    "Montreal": "Hard",
+    "Boston": "Hard",
+    "Merion": "Hard",
+    "South Orange": "Hard",
+    "Orange": "Hard",
+    "Newport RI": "Grass",
+    "Long Island": "Hard",
+    "Sydney": "Hard",
+    "Melbourne": "Hard",
+    "Perth": "Hard",
+    "Adelaide": "Hard",
+    "Wellington": "Hard",
+    "Christchurch": "Hard",
+    "Manila": "Hard",
+    "Osaka": "Hard",
+    "Tokyo Outdoor": "Hard",
+    "Taipei": "Hard",
+    "Kuala Lumpur": "Hard",
+    "Jakarta": "Hard",
+    "Calcutta": "Grass",
+    "Bombay": "Grass",
+    "Lagos": "Hard",
+    "Cairo": "Clay",
+    "Casablanca": "Clay",
+    "Tunis": "Clay",
+    "Nairobi": "Grass",
+    "London": "Grass",
+    "Manchester": "Grass",
+    "Nottingham": "Grass",
+    "Bristol": "Grass",
+    "Leeds": "Grass",
+    "Edinburgh": "Grass",
+    "Dublin": "Grass",
+    "Cork": "Grass",
+    "Belfast": "Grass",
+    "Paris Indoor": "Hard",
+    "Nice": "Clay",
+    "Cannes": "Clay",
+    "Aix-en-Provence": "Clay",
+    "Bordeaux": "Clay",
+    "Toulouse": "Hard",
+    "Montpellier": "Hard",
+    "Strasbourg": "Clay",
+    "Brest": "Hard",
+    "Cherbourg": "Hard",
+    "Rennes": "Hard",
+    "Nantes": "Hard",
+    "Lille": "Hard",
+    "Grenoble": "Hard",
+    "Clermont-Ferrand": "Hard",
+    "Biarritz": "Clay",
+    "Saint-Raphaël": "Hard",
+    "Antibes": "Clay",
+    "Sophia Antipolis": "Hard",
+    "Mouilleron-le-Captif": "Hard",
+    "Roanne": "Hard",
+    "Orleans": "Hard",
+    "Quimper": "Hard",
+    "Bressuire": "Hard",
 }
+
+# Fonctions utilitaires pour les tournois
+def get_tournament_surface(tournament_name):
+    """Récupère la surface d'un tournoi avec fallback"""
+    return TOURNAMENTS_DB.get(tournament_name, "Hard")
+
+def search_tournaments(search_term):
+    """Recherche des tournois par nom"""
+    search_term = search_term.lower()
+    return [t for t in sorted(TOURNAMENTS_DB.keys()) if search_term in t.lower()]
 
 STATUS_OPTIONS = {
     "en_attente": "⏳ En attente",
@@ -209,7 +451,6 @@ def check_and_unlock_achievements():
     
     if new_unlocks:
         save_achievements(achievements)
-        # Envoyer notification Telegram pour les nouveaux achievements
         send_achievement_notification(new_unlocks)
     
     return new_unlocks
@@ -223,7 +464,7 @@ def send_achievement_notification(achievements):
     send_telegram_message(message)
 
 # ─────────────────────────────────────────────────────────────
-# TELEGRAM INTEGRATION AMÉLIORÉE
+# TELEGRAM INTEGRATION
 # ─────────────────────────────────────────────────────────────
 def get_telegram_config():
     try:
@@ -808,7 +1049,7 @@ def calculate_global_accuracy():
     return (stats.get('correct_predictions', 0) / total_valide * 100) if total_valide > 0 else 0
 
 # ─────────────────────────────────────────────────────────────
-# SCRAPING RÉEL DES MATCHS (VERSION CORRIGÉE)
+# SCRAPING RÉEL DES MATCHS
 # ─────────────────────────────────────────────────────────────
 def scrape_flashscore():
     """Scrape les matchs depuis FlashScore"""
@@ -825,8 +1066,6 @@ def scrape_flashscore():
         soup = BeautifulSoup(response.content, 'html.parser')
         
         matches = []
-        
-        # Chercher les matchs (adapté à la structure de FlashScore)
         event_items = soup.find_all('div', class_='event__match')
         
         for item in event_items[:15]:
@@ -838,8 +1077,7 @@ def scrape_flashscore():
                     p1 = home.text.strip()
                     p2 = away.text.strip()
                     
-                    # Déterminer la surface
-                    surface = 'Hard'  # Par défaut
+                    surface = 'Hard'
                     tournament_elem = item.find('div', class_='event__title')
                     if tournament_elem:
                         tournament_text = tournament_elem.text.lower()
@@ -878,9 +1116,8 @@ def scrape_tennis_explorer():
         soup = BeautifulSoup(response.content, 'html.parser')
         
         matches = []
-        
-        # Chercher les matchs du jour
         today_matches = soup.find('table', class_='results')
+        
         if today_matches:
             rows = today_matches.find_all('tr')[1:16]
             
@@ -920,24 +1157,21 @@ def get_mock_matches():
         {'p1': 'Holger Rune', 'p2': 'Casper Ruud', 'surface': 'Grass', 'tournament': 'Wimbledon'},
     ]
 
-@st.cache_data(ttl=1800)  # Cache 30 minutes
+@st.cache_data(ttl=1800)
 def get_daily_matches(force_refresh=False):
     """Récupère les vrais matchs du jour avec fallback"""
     
     if force_refresh:
         st.cache_data.clear()
     
-    # Essayer d'abord FlashScore
     matches = scrape_flashscore()
     if matches and len(matches) > 0:
         return matches
     
-    # Puis Tennis Explorer
     matches = scrape_tennis_explorer()
     if matches and len(matches) > 0:
         return matches
     
-    # Fallback sur les matchs simulés
     return get_mock_matches()
 
 def auto_load_today_matches():
@@ -959,7 +1193,7 @@ def auto_load_today_matches():
     return None
 
 # ─────────────────────────────────────────────────────────────
-# DÉTECTION VALUE BETS EN TEMPS RÉEL
+# DÉTECTION VALUE BETS
 # ─────────────────────────────────────────────────────────────
 def scan_for_value_bets(matches):
     """Scanne une liste de matchs pour trouver des value bets"""
@@ -969,7 +1203,6 @@ def scan_for_value_bets(matches):
     for match in matches:
         proba, _ = calculate_probability(match['p1'], match['p2'], match['surface'], None, model_info)
         
-        # Simuler des cotes réalistes
         odds1 = round(1/proba * (0.9 + 0.2*np.random.random()), 2)
         odds2 = round(1/(1-proba) * (0.9 + 0.2*np.random.random()), 2)
         
@@ -1156,7 +1389,7 @@ def save_combine(combine_data):
         return False
 
 # ─────────────────────────────────────────────────────────────
-# COMPOSANT DE SÉLECTION DE JOUEUR AVEC RECHERCHE
+# SÉLECTEUR DE JOUEUR AVEC RECHERCHE
 # ─────────────────────────────────────────────────────────────
 def player_selector(label, all_players, key, default=None):
     """Composant de sélection de joueur avec recherche"""
@@ -1199,7 +1432,46 @@ def player_selector(label, all_players, key, default=None):
         return st.text_input(label, key=key)
 
 # ─────────────────────────────────────────────────────────────
-# DASHBOARD INTERACTIF AVEC PLOTLY
+# SÉLECTEUR DE TOURNOI AVEC RECHERCHE
+# ─────────────────────────────────────────────────────────────
+def tournament_selector(label, key, default=None):
+    """Sélecteur de tournoi avec recherche"""
+    if f"search_tourn_{key}" not in st.session_state:
+        st.session_state[f"search_tourn_{key}"] = ""
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        search = st.text_input(f"🔍 Rechercher {label}", 
+                               value=st.session_state[f"search_tourn_{key}"],
+                               key=f"search_tourn_input_{key}",
+                               placeholder="Tapez le tournoi...")
+        st.session_state[f"search_tourn_{key}"] = search
+    
+    tournaments = sorted(TOURNAMENTS_DB.keys())
+    if search:
+        filtered = [t for t in tournaments if search.lower() in t.lower()]
+        if not filtered:
+            st.warning("Aucun tournoi trouvé")
+            filtered = tournaments[:50]
+    else:
+        filtered = tournaments[:50]
+    
+    with col2:
+        st.caption(f"{len(filtered)} tournois")
+    
+    default_idx = 0
+    if default and default in filtered:
+        default_idx = filtered.index(default)
+    elif default:
+        for i, t in enumerate(filtered):
+            if default.lower() in t.lower():
+                default_idx = i
+                break
+    
+    return st.selectbox(label, filtered, index=default_idx, key=key)
+
+# ─────────────────────────────────────────────────────────────
+# DASHBOARD INTERACTIF
 # ─────────────────────────────────────────────────────────────
 def create_interactive_dashboard():
     """Crée un dashboard interactif avec Plotly"""
@@ -1339,7 +1611,6 @@ def analyze_trends():
     recent_total = len(recent[recent['statut'].isin(['gagne', 'perdu'])])
     trends['recent_trend'] = recent_correct / recent_total * 100 if recent_total > 0 else 0
     
-    # Sauvegarder les tendances
     try:
         with open(TRENDS_FILE, 'w') as f:
             json.dump(trends, f, indent=2)
@@ -1377,7 +1648,6 @@ def show_dashboard():
     """Page Dashboard améliorée avec tendances et badges"""
     st.markdown("## 🏠 Dashboard")
     
-    # Métriques principales
     stats = load_user_stats()
     history = load_history()
     trends = analyze_trends()
@@ -1395,7 +1665,6 @@ def show_dashboard():
     with col4:
         st.metric("Badges", len(achievements))
     
-    # Badges récents
     if achievements:
         st.markdown("### 🏆 Badges débloqués")
         cols = st.columns(min(len(achievements), 4))
@@ -1410,16 +1679,13 @@ def show_dashboard():
                 </div>
                 """, unsafe_allow_html=True)
     
-    # Conseils de paris
     if trends:
         st.markdown("### 💡 Conseils personnalisés")
         advice = generate_betting_advice()
         st.info(advice)
     
-    # Dashboard interactif
     create_interactive_dashboard()
     
-    # Statut des services
     model_info = load_saved_model()
     groq_key = get_groq_key()
     telegram_token, _ = get_telegram_config()
@@ -1445,9 +1711,9 @@ def show_prediction():
     with st.spinner("Chargement des joueurs depuis les CSV..."):
         all_players = load_atp_data()
     
-    st.success(f"✅ {len(all_players):,} joueurs disponibles dans la base de données")
+    st.success(f"✅ {len(all_players):,} joueurs disponibles")
+    st.info(f"✅ {len(TOURNAMENTS_DB)} tournois disponibles")
     
-    # Option de chargement automatique
     col1, col2 = st.columns([1, 3])
     with col1:
         auto_load = st.checkbox("📅 Auto-load matchs", value=True, key="auto_load")
@@ -1455,7 +1721,6 @@ def show_prediction():
         if auto_load:
             auto_load_today_matches()
     
-    # Configuration
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         default_n = len(st.session_state.get('today_matches', [3]))
@@ -1467,13 +1732,10 @@ def show_prediction():
     with col4:
         send_tg = st.checkbox("📱 Envoyer Telegram", True, key="send_tg")
     
-    # Saisie des matchs
     matches = []
     st.markdown("### 📝 Saisie des matchs")
     
     tournaments_list = sorted(TOURNAMENTS_DB.keys())
-    
-    # Pré-remplir avec les matchs du jour si disponibles
     today_matches = st.session_state.get('today_matches', [])
     
     for i in range(n_matches):
@@ -1485,25 +1747,21 @@ def show_prediction():
             col1, col2 = st.columns(2)
             
             with col1:
-                p1 = player_selector(f"Joueur 1", all_players, key=f"p1_{i}", 
-                                     default=default_p1)
+                p1 = player_selector(f"Joueur 1", all_players, key=f"p1_{i}", default=default_p1)
                 odds1 = st.text_input(f"Cote {p1}", key=f"odds1_{i}", placeholder="1.75", value="1.75" if i==0 else "")
             
             with col2:
                 if p1:
                     players2 = [p for p in all_players if p != p1]
-                    p2 = player_selector(f"Joueur 2", players2, key=f"p2_{i}",
-                                         default=default_p2)
+                    p2 = player_selector(f"Joueur 2", players2, key=f"p2_{i}", default=default_p2)
                 else:
                     p2 = player_selector(f"Joueur 2", all_players, key=f"p2_{i}")
                 odds2 = st.text_input(f"Cote {p2}", key=f"odds2_{i}", placeholder="2.10", value="2.10" if i==0 else "")
             
             col1, col2 = st.columns(2)
             with col1:
-                tournament = st.selectbox(f"Tournoi", tournaments_list, 
-                                         index=tournaments_list.index(default_tournament) if default_tournament in tournaments_list else 0,
-                                         key=f"tourn_{i}")
-                surface = TOURNAMENTS_DB[tournament]
+                tournament = tournament_selector(f"Tournoi", key=f"tourn_{i}", default=default_tournament)
+                surface = get_tournament_surface(tournament)
             with col2:
                 st.info(f"Surface: {SURFACE_CONFIG[surface]['icon']} {surface}")
             
@@ -1517,7 +1775,6 @@ def show_prediction():
                 'index': i
             })
     
-    # Bouton d'analyse
     analyze_button = st.button("🔍 Analyser tous les matchs", type="primary", use_container_width=True, key="analyze_button")
     
     if analyze_button:
@@ -1565,7 +1822,6 @@ def show_prediction():
                     wins2 = h2h.get(f"{match['player2']}_wins", 0)
                     st.caption(f"H2H: {wins1}-{wins2}")
             
-            # Value bet
             best_value = None
             if match['odds1'] and match['odds2']:
                 try:
@@ -1584,7 +1840,6 @@ def show_prediction():
                 except Exception as e:
                     st.warning(f"Erreur de conversion des cotes: {e}")
             
-            # Paris alternatifs
             bet_suggestions = generate_alternative_bets(match['player1'], match['player2'], 
                                                         match['surface'], proba, h2h)
             
@@ -1593,7 +1848,6 @@ def show_prediction():
                     for bet in bet_suggestions:
                         st.info(f"{bet['type']}: {bet['description']} (proba: {bet['proba']:.1%})")
             
-            # Analyse IA
             ai_comment = None
             if use_ai and get_groq_key():
                 with st.spinner("Analyse IA..."):
@@ -1604,7 +1858,6 @@ def show_prediction():
                         with st.expander("🤖 Analyse IA"):
                             st.write(ai_comment)
             
-            # Préparation et sauvegarde
             pred_data = {
                 'player1': match['player1'], 'player2': match['player2'],
                 'tournament': match['tournament'], 'surface': match['surface'],
@@ -1627,7 +1880,6 @@ def show_prediction():
             matches_analysis.append(pred_data)
             st.divider()
         
-        # Vérifier les nouveaux badges
         new_badges = check_and_unlock_achievements()
         if new_badges:
             st.balloons()
@@ -1657,12 +1909,10 @@ def show_telegram():
     
     st.success(f"✅ Telegram configuré (Chat ID: {chat_id})")
     
-    # Configuration des commandes
     if st.button("🔄 Configurer les commandes", use_container_width=True):
         setup_telegram_commands()
         st.success("✅ Commandes configurées!")
     
-    # Test de connexion
     if st.button("🔧 Tester la connexion", use_container_width=True):
         success, msg = test_telegram_connection()
         if success:
@@ -1670,7 +1920,6 @@ def show_telegram():
         else:
             st.error(msg)
     
-    # Commandes disponibles
     st.markdown("### 📋 Commandes disponibles")
     commands_df = pd.DataFrame([
         ["/start", "Démarrer le bot"],
@@ -1683,7 +1932,6 @@ def show_telegram():
     ], columns=["Commande", "Description"])
     st.dataframe(commands_df, use_container_width=True, hide_index=True)
     
-    # Simulateur de commande
     st.markdown("### 🎮 Simulateur de commande")
     cmd = st.text_input("Tape une commande", "/stats")
     if st.button("Exécuter"):
@@ -1691,7 +1939,6 @@ def show_telegram():
         st.markdown("**Réponse:**")
         st.markdown(response, unsafe_allow_html=True)
     
-    # Message personnalisé
     send_custom_message()
 
 def show_achievements():
@@ -1701,7 +1948,6 @@ def show_achievements():
     achievements = load_achievements()
     stats = load_user_stats()
     
-    # Progression globale
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Badges débloqués", f"{len(achievements)}/{len(ACHIEVEMENTS)}")
@@ -1711,7 +1957,6 @@ def show_achievements():
     with col3:
         st.metric("Progression", f"{progress:.0f}%")
     
-    # Liste des badges
     st.markdown("### 📋 Liste des badges")
     
     cols = st.columns(2)
@@ -1797,7 +2042,6 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # CSS personnalisé
     st.markdown("""
     <style>
         .stApp { background: linear-gradient(135deg, #0A1E2C 0%, #1A2E3C 100%); }
@@ -1808,7 +2052,6 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    # Backup automatique (toutes les 24h)
     if 'last_backup' not in st.session_state:
         st.session_state['last_backup'] = datetime.now()
     
@@ -1816,7 +2059,6 @@ def main():
         auto_backup()
         st.session_state['last_backup'] = datetime.now()
     
-    # Sidebar avec menu simple
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; margin-bottom: 2rem;">
@@ -1824,7 +2066,7 @@ def main():
                 TennisIQ
             </div>
             <div style="font-size: 0.9rem; color: #6C7A89;">
-                ML & IA
+                {len(TOURNAMENTS_DB)} tournois • ML • IA
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1838,7 +2080,6 @@ def main():
         
         st.divider()
         
-        # Stats rapides
         stats = load_user_stats()
         pending = len([p for p in load_history() if p.get('statut') == 'en_attente'])
         accuracy = calculate_global_accuracy()
@@ -1852,7 +2093,6 @@ def main():
             st.metric("En attente", pending)
             st.metric("Série", stats.get('current_streak', 0))
     
-    # Navigation
     if page == "🏠 Dashboard":
         show_dashboard()
     elif page == "🎯 Multi-matchs":
