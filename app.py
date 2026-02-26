@@ -1062,55 +1062,61 @@ def show_predictions(atp_data):
             # FIX: utilise render_result_card() → unsafe_allow_html garanti
             render_result_card(p1, p2, proba, confidence)
 
-            col_t1, col_t2, col_t3 = st.columns(3)
-            with col_t1:
-                send_tg = st.checkbox("📤 Envoyer Telegram", key="pred_send_tg")
-            with col_t2:
-                send_ai = st.checkbox("🤖 Ajouter analyse IA", key="pred_send_ai")
-            with col_t3:
-                if st.button("🤖 Générer IA", key="pred_gen_ai", use_container_width=True):
-                    with st.spinner("Analyse IA en cours..."):
-                        vb_txt = f"Value bet sur {best_value['joueur']} (edge {best_value['edge']*100:+.1f}%)" if best_value else "Aucun value bet"
-                        prompt = f"Analyse ce match ATP : {p1} vs {p2} sur {surface}. Proba: {p1} {proba:.1%} | {p2} {1-proba:.1%}. {vb_txt}. Donne une analyse concise en 3 points en français."
-                        ai_analysis = call_groq_api(prompt)
-                        if ai_analysis:
-                            st.session_state['last_ai'] = ai_analysis
-                            st.info(ai_analysis)
+            # Bouton IA
+            if st.button("🤖 Générer analyse IA", key="pred_gen_ai", use_container_width=True):
+                with st.spinner("Analyse IA en cours..."):
+                    vb_txt = f"Value bet sur {best_value['joueur']} (edge {best_value['edge']*100:+.1f}%)" if best_value else "Aucun value bet"
+                    prompt = f"Analyse ce match ATP : {p1} vs {p2} sur {surface}. Proba: {p1} {proba:.1%} | {p2} {1-proba:.1%}. {vb_txt}. Donne une analyse concise en 3 points en français."
+                    ai_analysis = call_groq_api(prompt)
+                    if ai_analysis:
+                        st.session_state['last_ai'] = ai_analysis
+
+            if st.session_state.get('last_ai'):
+                st.info(st.session_state['last_ai'])
 
             if best_value:
                 st.success(f"✅ Value bet! {best_value['joueur']} @ {best_value['cote']:.2f} (edge: {best_value['edge']*100:+.1f}%)")
 
-            if st.button("💾 Sauvegarder", key="pred_save", use_container_width=True):
-                pred_data = {
-                    'player1': p1, 'player2': p2,
-                    'tournament': tournament if tournament else "Inconnu",
-                    'surface': surface,
-                    'proba': float(proba),
-                    'confidence': float(confidence),
-                    'odds1': odds1 if odds1 else None,
-                    'odds2': odds2 if odds2 else None,
-                    'favori_modele': favori,
-                    'best_value': best_value,
-                    'ml_used': ml_used,
-                    'date': datetime.now().isoformat(),
-                    'statut': 'en_attente'
-                }
-                if save_prediction(pred_data):
-                    st.success("✅ Prédiction sauvegardée dans l'historique !")
-                    if send_tg:
-                        with st.spinner("📤 Envoi sur Telegram..."):
-                            ai_comment = st.session_state.get('last_ai') if send_ai else None
-                            token, chat_id = get_telegram_config()
-                            if not token or not chat_id:
-                                st.error("❌ Telegram non configuré : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant dans les secrets.")
+            # Construit pred_data une seule fois, partagé par les 2 boutons
+            pred_data = {
+                'player1': p1, 'player2': p2,
+                'tournament': tournament if tournament else "Inconnu",
+                'surface': surface,
+                'proba': float(proba),
+                'confidence': float(confidence),
+                'odds1': odds1 if odds1 else None,
+                'odds2': odds2 if odds2 else None,
+                'favori_modele': favori,
+                'best_value': best_value,
+                'ml_used': ml_used,
+                'date': datetime.now().isoformat(),
+                'statut': 'en_attente'
+            }
+
+            col_b1, col_b2 = st.columns(2)
+
+            # BOUTON 1 — Sauvegarder
+            with col_b1:
+                if st.button("💾 Sauvegarder", key="pred_save", use_container_width=True):
+                    if save_prediction(pred_data):
+                        st.success("✅ Prédiction sauvegardée !")
+                    else:
+                        st.error("❌ Erreur lors de la sauvegarde")
+
+            # BOUTON 2 — Envoyer sur Telegram (indépendant du save)
+            with col_b2:
+                if st.button("📱 Envoyer sur Telegram", key="pred_send_tg_btn", use_container_width=True):
+                    token_check, chat_check = get_telegram_config()
+                    if not token_check or not chat_check:
+                        st.error("❌ TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant dans les secrets Streamlit.")
+                    else:
+                        with st.spinner("📤 Envoi en cours..."):
+                            ai_comment = st.session_state.get('last_ai')
+                            result = send_prediction_to_telegram(pred_data, ai_comment)
+                            if result:
+                                st.success("📱 Prédiction envoyée sur Telegram !")
                             else:
-                                result = send_prediction_to_telegram(pred_data, ai_comment)
-                                if result:
-                                    st.success("📱 Prédiction envoyée sur Telegram !")
-                                else:
-                                    st.error("❌ Échec Telegram. Vérifie que ton bot est admin dans le chat et que le chat_id est correct.")
-                else:
-                    st.error("❌ Erreur lors de la sauvegarde dans l'historique")
+                                st.error("❌ Échec de l'envoi. Va dans l'onglet 📱 Telegram → Test pour diagnostiquer.")
 
 # ─────────────────────────────────────────────────────────────
 # MULTI-MATCHS
