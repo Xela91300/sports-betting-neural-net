@@ -172,7 +172,7 @@ def send_telegram_message(message, parse_mode='HTML'):
         return False
 
 def format_prediction_message(pred_data, bet_suggestions=None, ai_comment=None):
-    """Formate un message de prédiction pour Telegram avec toutes les infos"""
+    """Formate un message de prédiction pour Telegram"""
     proba = pred_data.get('proba', 0.5)
     bar_length = 10
     filled = int(proba * bar_length)
@@ -200,7 +200,6 @@ def format_prediction_message(pred_data, bet_suggestions=None, ai_comment=None):
 <b>Confiance:</b> {'🟢' if pred_data.get('confidence', 0) >= 70 else '🟡' if pred_data.get('confidence', 0) >= 50 else '🔴'} {pred_data.get('confidence', 0):.0f}/100
 """
     
-    # Ajouter les cotes si disponibles
     if pred_data.get('odds1') and pred_data.get('odds2'):
         message += f"""
 <b>Cotes:</b>
@@ -208,7 +207,6 @@ def format_prediction_message(pred_data, bet_suggestions=None, ai_comment=None):
 • {pred_data.get('player2', 'J2')}: <code>{pred_data.get('odds2')}</code>
 """
     
-    # Ajouter les paris alternatifs
     if bet_suggestions:
         message += f"\n<b>🎯 PARIS ALTERNATIFS:</b>\n"
         for bet in bet_suggestions[:3]:
@@ -216,7 +214,6 @@ def format_prediction_message(pred_data, bet_suggestions=None, ai_comment=None):
             message += f"\n{conf_icon} <b>{bet['type']}</b>: {bet['description']}\n"
             message += f"   Probabilité: {bet['proba']:.1%} | Cote: {bet['cote']:.2f}\n"
     
-    # Ajouter le value bet
     if pred_data.get('best_value'):
         bv = pred_data['best_value']
         edge_color = '🟢' if bv['edge'] > 0.05 else '🟡'
@@ -226,7 +223,6 @@ def format_prediction_message(pred_data, bet_suggestions=None, ai_comment=None):
 Edge: <b>{bv['edge']*100:+.1f}%</b>
 """
     
-    # Ajouter l'analyse IA
     if ai_comment:
         clean_comment = ai_comment.replace('<', '&lt;').replace('>', '&gt;')
         message += f"\n\n<b>🤖 ANALYSE IA:</b>\n{clean_comment}"
@@ -318,15 +314,12 @@ def format_stats_message():
     return message
 
 def send_prediction_to_telegram(pred_data, bet_suggestions=None, ai_comment=None):
-    """Envoie une prédiction sur Telegram"""
     return send_telegram_message(format_prediction_message(pred_data, bet_suggestions, ai_comment))
 
 def send_combine_to_telegram(combine_data, ai_comment=None):
-    """Envoie un combiné sur Telegram"""
     return send_telegram_message(format_combine_message(combine_data, ai_comment))
 
 def send_stats_to_telegram():
-    """Envoie les statistiques sur Telegram"""
     return send_telegram_message(format_stats_message())
 
 def send_custom_message():
@@ -356,7 +349,6 @@ def send_custom_message():
                 st.error("❌ Échec de l'envoi. Vérifie la configuration Telegram.")
 
 def test_telegram_connection():
-    """Teste la connexion Telegram"""
     token, chat_id = get_telegram_config()
     if not token:
         return False, "❌ Token manquant"
@@ -432,6 +424,22 @@ def analyze_match_with_ai(player1, player2, surface, tournament, proba, best_val
     
     return call_groq_api(prompt)
 
+def analyze_combine_with_ai(selections, proba_globale, cote_globale, esperance):
+    """Génère une analyse IA pour un combiné"""
+    selections_txt = "\n".join([f"- {s['joueur']} @ {s['cote']:.2f} (edge: {s['edge']*100:+.1f}%)" for s in selections[:5]])
+    
+    prompt = f"""Analyse ce combiné de tennis:
+    {len(selections)} sélections:
+    {selections_txt}
+    
+    Probabilité globale: {proba_globale:.1%}
+    Cote combinée: {cote_globale:.2f}
+    Espérance: {esperance:+.2f}€
+    
+    Donne un avis concis sur la pertinence de ce combiné."""
+    
+    return call_groq_api(prompt)
+
 # ─────────────────────────────────────────────────────────────
 # CHARGEMENT DU MODÈLE ML
 # ─────────────────────────────────────────────────────────────
@@ -467,7 +475,6 @@ def predict_with_ml_model(model_info, player1, player2, surface='Hard'):
         if not s1 or not s2:
             return None
         
-        # Features simplifiées
         r1 = max(s1.get('rank', 500.0), 1.0)
         r2 = max(s2.get('rank', 500.0), 1.0)
         log_rank_ratio = np.log(r2 / r1)
@@ -505,7 +512,7 @@ def load_atp_data():
         return pd.DataFrame()
     
     atp_dfs = []
-    for f in csv_files[:10]:  # Limiter pour la vitesse
+    for f in csv_files[:10]:
         if 'wta' in f.name.lower():
             continue
         try:
@@ -531,14 +538,13 @@ def get_all_players(_df):
     players.update(_df['winner_name'].dropna().unique())
     players.update(_df['loser_name'].dropna().unique())
     
-    # Filtrer les valeurs invalides
     valid_players = []
     for p in players:
         p_str = str(p).strip()
         if p_str and p_str.lower() != 'nan' and len(p_str) > 1:
             valid_players.append(p_str)
     
-    return sorted(valid_players)[:1000]  # Limiter à 1000 pour la performance
+    return sorted(valid_players)[:1000]
 
 def get_h2h_stats(df, player1, player2):
     """Récupère les stats H2H entre deux joueurs"""
@@ -632,6 +638,103 @@ def generate_alternative_bets(player1, player2, surface, proba, h2h=None):
     return suggestions
 
 # ─────────────────────────────────────────────────────────────
+# FONCTIONS POUR LES COMBINÉS RECOMMANDÉS
+# ─────────────────────────────────────────────────────────────
+def generate_recommended_combines(matches_analysis):
+    """Génère des combinés recommandés à partir des matchs analysés"""
+    if len(matches_analysis) < 2:
+        return []
+    
+    matches_with_edge = [m for m in matches_analysis if m.get('best_value')]
+    matches_with_edge.sort(key=lambda x: x['best_value']['edge'], reverse=True)
+    
+    suggestions = []
+    
+    # Suggestion 1: Top value bets
+    if len(matches_with_edge) >= 2:
+        top_edges = matches_with_edge[:min(3, len(matches_with_edge))]
+        selections = [{
+            'match': f"{m['player1']} vs {m['player2']}",
+            'joueur': m['best_value']['joueur'],
+            'proba': m['best_value']['proba'],
+            'cote': m['best_value']['cote'],
+            'edge': m['best_value']['edge']
+        } for m in top_edges]
+        
+        proba_combi = np.prod([s['proba'] for s in selections])
+        cote_combi = np.prod([s['cote'] for s in selections])
+        
+        suggestions.append({
+            'name': '🔥 Top Value Bets',
+            'selections': selections,
+            'proba': proba_combi,
+            'cote': cote_combi,
+            'nb_matches': len(selections)
+        })
+    
+    # Suggestion 2: Haute confiance
+    high_confidence = [m for m in matches_analysis if m.get('confidence', 0) >= 70]
+    if len(high_confidence) >= 2:
+        top_confidence = high_confidence[:min(3, len(high_confidence))]
+        selections = [{
+            'match': f"{m['player1']} vs {m['player2']}",
+            'joueur': m['favori'],
+            'proba': m['proba'] if m['proba'] >= 0.5 else 1-m['proba'],
+            'cote': 1/m['proba'] if m['proba'] >= 0.5 else 1/(1-m['proba']),
+            'edge': 0.05
+        } for m in top_confidence]
+        
+        proba_combi = np.prod([s['proba'] for s in selections])
+        cote_combi = np.prod([s['cote'] for s in selections])
+        
+        suggestions.append({
+            'name': '💪 Haute Confiance',
+            'selections': selections,
+            'proba': proba_combi,
+            'cote': cote_combi,
+            'nb_matches': len(selections)
+        })
+    
+    # Suggestion 3: Combiné équilibré
+    if len(matches_analysis) >= 3:
+        value_bets = matches_with_edge[:2] if len(matches_with_edge) >= 2 else []
+        favorites = [m for m in matches_analysis if m.get('confidence', 0) >= 60 and m not in value_bets]
+        
+        selections = []
+        for vb in value_bets[:2]:
+            selections.append({
+                'match': f"{vb['player1']} vs {vb['player2']}",
+                'joueur': vb['best_value']['joueur'],
+                'proba': vb['best_value']['proba'],
+                'cote': vb['best_value']['cote'],
+                'edge': vb['best_value']['edge']
+            })
+        
+        if favorites and len(selections) < 3:
+            fav = favorites[0]
+            selections.append({
+                'match': f"{fav['player1']} vs {fav['player2']}",
+                'joueur': fav['favori'],
+                'proba': fav['proba'] if fav['proba'] >= 0.5 else 1-fav['proba'],
+                'cote': 1/fav['proba'] if fav['proba'] >= 0.5 else 1/(1-fav['proba']),
+                'edge': 0.03
+            })
+        
+        if len(selections) >= 2:
+            proba_combi = np.prod([s['proba'] for s in selections])
+            cote_combi = np.prod([s['cote'] for s in selections])
+            
+            suggestions.append({
+                'name': '⚖️ Combiné Équilibré',
+                'selections': selections,
+                'proba': proba_combi,
+                'cote': cote_combi,
+                'nb_matches': len(selections)
+            })
+    
+    return suggestions[:MAX_COMBINE_SUGGESTIONS]
+
+# ─────────────────────────────────────────────────────────────
 # GESTION DE L'HISTORIQUE
 # ─────────────────────────────────────────────────────────────
 def load_history():
@@ -691,7 +794,6 @@ def update_user_stats():
     correct = sum(1 for p in history if p.get('statut') == 'gagne')
     incorrect = sum(1 for p in history if p.get('statut') == 'perdu')
     
-    # Calculer les séries
     current_streak = 0
     best_streak = 0
     streak = 0
@@ -718,6 +820,28 @@ def update_user_stats():
         json.dump(stats, f)
     return stats
 
+def load_combines():
+    if not COMB_HIST_FILE.exists():
+        return []
+    try:
+        with open(COMB_HIST_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_combine(combine_data):
+    try:
+        combines = load_combines()
+        combine_data['date'] = datetime.now().isoformat()
+        combine_data['id'] = hashlib.md5(f"{datetime.now()}".encode()).hexdigest()[:8]
+        combine_data['statut'] = 'en_attente'
+        combines.append(combine_data)
+        with open(COMB_HIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(combines[-200:], f, indent=2)
+        return True
+    except:
+        return False
+
 # ─────────────────────────────────────────────────────────────
 # PAGES DE L'APPLICATION
 # ─────────────────────────────────────────────────────────────
@@ -740,7 +864,6 @@ def show_dashboard():
     with col4:
         st.metric("Série actuelle", stats.get('current_streak', 0))
     
-    # Stats des services
     model_info = load_saved_model()
     groq_key = get_groq_key()
     telegram_token, _ = get_telegram_config()
@@ -757,10 +880,9 @@ def show_dashboard():
         st.success("✅ Telegram" if telegram_token else "⚠️ Telegram non configuré")
 
 def show_prediction():
-    """Page de prédiction principale avec envoi Telegram"""
-    st.markdown("## 🎯 Prédiction de match")
+    """Page de prédiction avec analyse multi-matchs (jusqu'à 30) et génération de combinés"""
+    st.markdown("## 🎯 Analyse Multi-matchs (max 30)")
     
-    # Charger les données
     model_info = load_saved_model()
     
     with st.spinner("Chargement des joueurs..."):
@@ -770,65 +892,99 @@ def show_prediction():
     st.success(f"✅ {len(all_players)} joueurs disponibles")
     
     # Configuration
-    col1, col2 = st.columns(2)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        player1 = st.selectbox("Joueur 1", all_players, key="p1")
-        odds1 = st.text_input("Cote Joueur 1", placeholder="1.75")
-    
+        n_matches = st.number_input("Nombre de matchs", 1, MAX_MATCHES_ANALYSIS, 3)
     with col2:
-        players2 = [p for p in all_players if p != player1]
-        player2 = st.selectbox("Joueur 2", players2, key="p2")
-        odds2 = st.text_input("Cote Joueur 2", placeholder="2.10")
+        mise = st.number_input("Mise (€)", 1.0, 1000.0, 10.0)
+    with col3:
+        use_ai = st.checkbox("🤖 Analyser avec IA", True)
+    with col4:
+        send_tg = st.checkbox("📱 Envoyer sur Telegram", False)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        tournament = st.selectbox("Tournoi", sorted(TOURNAMENTS_DB.keys()))
-        surface = TOURNAMENTS_DB[tournament]
-    with col2:
-        st.info(f"Surface: {SURFACE_CONFIG[surface]['icon']} {surface}")
-        use_ai = st.checkbox("🤖 Analyse IA", True)
-        send_telegram = st.checkbox("📱 Envoyer sur Telegram", False)
+    # Saisie des matchs
+    matches = []
+    st.markdown("### 📝 Saisie des matchs")
     
-    if st.button("🔍 Prédire", type="primary", use_container_width=True):
-        with st.spinner("Calcul en cours..."):
-            # Calculs
-            h2h = get_h2h_stats(atp_data, player1, player2)
-            proba, ml_used = calculate_probability(atp_data, player1, player2, surface, h2h, model_info)
+    tournaments_list = sorted(TOURNAMENTS_DB.keys())
+    
+    for i in range(n_matches):
+        with st.expander(f"Match {i+1}", expanded=i==0):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                p1 = st.selectbox(f"Joueur 1", all_players, key=f"p1_{i}")
+                odds1 = st.text_input(f"Cote {p1}", key=f"odds1_{i}", placeholder="1.75")
+            
+            with col2:
+                players2 = [p for p in all_players if p != p1]
+                p2 = st.selectbox(f"Joueur 2", players2, key=f"p2_{i}")
+                odds2 = st.text_input(f"Cote {p2}", key=f"odds2_{i}", placeholder="2.10")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                tournament = st.selectbox(f"Tournoi", tournaments_list, key=f"tourn_{i}")
+                surface = TOURNAMENTS_DB[tournament]
+            with col2:
+                st.info(f"Surface: {SURFACE_CONFIG[surface]['icon']} {surface}")
+            
+            matches.append({
+                'player1': p1, 'player2': p2,
+                'surface': surface, 'tournament': tournament,
+                'odds1': odds1, 'odds2': odds2,
+                'index': i
+            })
+    
+    if st.button("🔍 Analyser tous les matchs", type="primary", use_container_width=True):
+        valid_matches = [m for m in matches if m['player1'] and m['player2']]
+        
+        if not valid_matches:
+            st.warning("Veuillez remplir au moins un match")
+            return
+        
+        st.markdown("---")
+        st.markdown("## 📊 Résultats de l'analyse")
+        
+        matches_analysis = []
+        all_selections = []
+        
+        # Analyser chaque match
+        for i, match in enumerate(valid_matches):
+            st.markdown(f"### Match {i+1}: {match['player1']} vs {match['player2']}")
+            st.caption(f"🏆 {match['tournament']} - {SURFACE_CONFIG[match['surface']]['icon']} {match['surface']}")
+            
+            h2h = get_h2h_stats(atp_data, match['player1'], match['player2'])
+            proba, ml_used = calculate_probability(atp_data, match['player1'], match['player2'], 
+                                                   match['surface'], h2h, model_info)
             confidence = calculate_confidence(proba, h2h)
             
             # Value bet
             best_value = None
-            if odds1 and odds2:
+            if match['odds1'] and match['odds2']:
                 try:
-                    o1 = float(odds1.replace(',', '.'))
-                    o2 = float(odds2.replace(',', '.'))
+                    o1 = float(match['odds1'].replace(',', '.'))
+                    o2 = float(match['odds2'].replace(',', '.'))
                     edge1 = proba - 1/o1
                     edge2 = (1-proba) - 1/o2
-                    if edge1 > 0.02:
-                        best_value = {'joueur': player1, 'edge': edge1, 'cote': o1, 'proba': proba}
-                    elif edge2 > 0.02:
-                        best_value = {'joueur': player2, 'edge': edge2, 'cote': o2, 'proba': 1-proba}
+                    if edge1 > MIN_EDGE_COMBINE:
+                        best_value = {'joueur': match['player1'], 'edge': edge1, 'cote': o1, 'proba': proba}
+                    elif edge2 > MIN_EDGE_COMBINE:
+                        best_value = {'joueur': match['player2'], 'edge': edge2, 'cote': o2, 'proba': 1-proba}
                 except:
                     pass
             
             # Paris alternatifs
-            bet_suggestions = generate_alternative_bets(player1, player2, surface, proba, h2h)
-            
-            # Analyse IA
-            ai_comment = None
-            if use_ai and get_groq_key():
-                with st.spinner("Analyse IA..."):
-                    ai_comment = analyze_match_with_ai(player1, player2, surface, tournament, proba, best_value, bet_suggestions)
+            bet_suggestions = generate_alternative_bets(match['player1'], match['player2'], 
+                                                        match['surface'], proba, h2h)
             
             # Affichage
-            st.markdown("### 📊 Résultat")
-            st.markdown(f"#### 🏆 Gagnant: **{player1 if proba >= 0.5 else player2}**")
+            st.markdown(f"#### 🏆 Gagnant: **{match['player1'] if proba >= 0.5 else match['player2']}**")
             
             col1, col2 = st.columns(2)
             with col1:
-                st.metric(player1, f"{proba:.1%}")
+                st.metric(match['player1'], f"{proba:.1%}")
             with col2:
-                st.metric(player2, f"{1-proba:.1%}")
+                st.metric(match['player2'], f"{1-proba:.1%}")
             
             st.progress(float(proba))
             
@@ -840,47 +996,118 @@ def show_prediction():
                 st.caption(f"Confiance: {conf_color} {confidence:.0f}/100")
             with col3:
                 if h2h:
-                    st.caption(f"H2H: {h2h.get(f'{player1}_wins', 0)}-{h2h.get(f'{player2}_wins', 0)}")
+                    st.caption(f"H2H: {h2h.get(f'{match['player1']}_wins', 0)}-{h2h.get(f'{match['player2']}_wins', 0)}")
             
             if best_value:
                 st.success(f"🎯 Value bet! {best_value['joueur']} @ {best_value['cote']:.2f} (edge: {best_value['edge']*100:+.1f}%)")
+                all_selections.append(best_value)
             
             if bet_suggestions:
-                st.markdown("### 🎯 Paris alternatifs")
+                st.markdown("#### 🎯 Paris alternatifs")
                 for bet in bet_suggestions:
                     st.info(f"{bet['type']}: {bet['description']} (proba: {bet['proba']:.1%})")
             
-            if ai_comment:
-                with st.expander("🤖 Analyse IA"):
-                    st.write(ai_comment)
+            # Analyse IA
+            ai_comment = None
+            if use_ai and get_groq_key():
+                with st.spinner("Analyse IA..."):
+                    ai_comment = analyze_match_with_ai(match['player1'], match['player2'], 
+                                                      match['surface'], match['tournament'],
+                                                      proba, best_value, bet_suggestions)
+                    if ai_comment:
+                        with st.expander("🤖 Analyse IA"):
+                            st.write(ai_comment)
             
-            # Sauvegarde
+            # Préparation données
             pred_data = {
-                'player1': player1, 'player2': player2,
-                'tournament': tournament, 'surface': surface,
+                'player1': match['player1'], 'player2': match['player2'],
+                'tournament': match['tournament'], 'surface': match['surface'],
                 'proba': float(proba), 'confidence': float(confidence),
-                'odds1': odds1, 'odds2': odds2,
-                'favori': player1 if proba >= 0.5 else player2,
+                'odds1': match['odds1'], 'odds2': match['odds2'],
+                'favori': match['player1'] if proba >= 0.5 else match['player2'],
                 'best_value': best_value, 'ml_used': ml_used,
                 'date': datetime.now().isoformat()
             }
             
+            matches_analysis.append(pred_data)
+            
+            # Boutons individuels
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("💾 Sauvegarder", use_container_width=True):
+                if st.button(f"💾 Sauvegarder match {i+1}", key=f"save_{i}"):
                     if save_prediction(pred_data):
-                        st.success("✅ Prédiction sauvegardée en attente!")
-            
+                        st.success("✅ Sauvegardé!")
             with col2:
-                if st.button("📱 Envoyer sur Telegram", use_container_width=True):
-                    token, chat_id = get_telegram_config()
-                    if not token or not chat_id:
-                        st.error("❌ Telegram non configuré. Va dans l'onglet 📱 Telegram pour configurer.")
-                    else:
-                        if send_prediction_to_telegram(pred_data, bet_suggestions, ai_comment):
-                            st.success("✅ Prédiction envoyée sur Telegram!")
-                        else:
-                            st.error("❌ Échec de l'envoi")
+                if st.button(f"📱 Envoyer match {i+1}", key=f"tg_{i}"):
+                    if send_prediction_to_telegram(pred_data, bet_suggestions, ai_comment):
+                        st.success("✅ Envoyé!")
+            
+            st.divider()
+        
+        # Génération de combinés
+        if len(all_selections) >= 2:
+            st.markdown("## 🎰 Combinés recommandés")
+            
+            suggestions = generate_recommended_combines(matches_analysis)
+            
+            for idx, suggestion in enumerate(suggestions):
+                with st.expander(f"{suggestion['name']} - {suggestion['nb_matches']} matchs - Proba {suggestion['proba']:.1%}", expanded=idx==0):
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Probabilité", f"{suggestion['proba']:.1%}")
+                    with col2:
+                        st.metric("Cote", f"{suggestion['cote']:.2f}")
+                    with col3:
+                        gain = mise * suggestion['cote']
+                        st.metric("Gain potentiel", f"{gain:.2f}€")
+                    
+                    st.markdown("**Sélections:**")
+                    for sel in suggestion['selections']:
+                        st.caption(f"• {sel['joueur']} @ {sel['cote']:.2f}")
+                    
+                    # Analyse IA du combiné
+                    combine_ai = None
+                    if use_ai and get_groq_key():
+                        combine_ai = analyze_combine_with_ai(suggestion['selections'], 
+                                                            suggestion['proba'], 
+                                                            suggestion['cote'],
+                                                            suggestion['proba'] * gain - mise)
+                    
+                    combine_data = {
+                        'selections': suggestion['selections'],
+                        'proba_globale': suggestion['proba'],
+                        'cote_globale': suggestion['cote'],
+                        'mise': mise,
+                        'gain_potentiel': gain,
+                        'esperance': suggestion['proba'] * gain - mise,
+                        'nb_matches': suggestion['nb_matches'],
+                        'ml_used': any(m.get('ml_used', False) for m in matches_analysis)
+                    }
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button(f"💾 Sauvegarder combiné", key=f"save_comb_{idx}"):
+                            save_combine(combine_data)
+                            st.success("✅ Combiné sauvegardé!")
+                    with col2:
+                        if st.button(f"📱 Envoyer combiné", key=f"tg_comb_{idx}"):
+                            if send_combine_to_telegram(combine_data, combine_ai):
+                                st.success("✅ Combiné envoyé!")
+                    
+                    if combine_ai:
+                        with st.expander("🤖 Analyse IA du combiné"):
+                            st.write(combine_ai)
+        
+        # Envoi groupé
+        if send_tg and matches_analysis:
+            st.markdown("### 📤 Envoi groupé")
+            if st.button("📤 Envoyer tous les matchs sur Telegram", use_container_width=True):
+                success = 0
+                for pred in matches_analysis:
+                    if send_prediction_to_telegram(pred):
+                        success += 1
+                st.success(f"✅ {success}/{len(matches_analysis)} matchs envoyés!")
 
 def show_pending():
     """Page des prédictions en attente"""
@@ -898,10 +1125,6 @@ def show_pending():
             st.write(f"Tournoi: {pred.get('tournament')}")
             st.write(f"Surface: {pred.get('surface')}")
             st.write(f"Probabilité: {pred.get('proba', 0.5):.1%}")
-            st.write(f"Confiance: {pred.get('confidence', 0):.0f}/100")
-            
-            if pred.get('best_value'):
-                st.success(f"Value bet: {pred['best_value']['joueur']}")
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -933,13 +1156,13 @@ def show_history():
     col1, col2 = st.columns(2)
     with col1:
         status_filter = st.multiselect(
-            "Filtrer par statut",
+            "Filtrer",
             options=list(STATUS_OPTIONS.keys()),
             format_func=lambda x: STATUS_OPTIONS[x],
             default=list(STATUS_OPTIONS.keys())
         )
     with col2:
-        search = st.text_input("🔍 Rechercher un joueur", "")
+        search = st.text_input("🔍 Rechercher", "")
     
     filtered = [p for p in history if p.get('statut') in status_filter]
     if search:
@@ -951,7 +1174,6 @@ def show_history():
         status_icon = STATUS_OPTIONS.get(pred.get('statut'), "⏳")
         with st.expander(f"{status_icon} {pred.get('date', '')[:16]} - {pred['player1']} vs {pred['player2']}"):
             st.write(f"Tournoi: {pred.get('tournament')}")
-            st.write(f"Surface: {pred.get('surface')}")
             st.write(f"Probabilité: {pred.get('proba', 0.5):.1%}")
             st.write(f"Statut: {STATUS_OPTIONS.get(pred.get('statut'), 'Inconnu')}")
 
@@ -961,6 +1183,7 @@ def show_statistics():
     
     stats = load_user_stats()
     history = load_history()
+    combines = load_combines()
     
     total = stats.get('total_predictions', 0)
     correct = stats.get('correct_predictions', 0)
@@ -984,17 +1207,15 @@ def show_statistics():
     with col1:
         st.metric("Série actuelle", stats.get('current_streak', 0))
     with col2:
-        st.metric("Meilleure série", stats.get('best_streak', 0))
+        st.metric("Combinés", len(combines))
     
     if st.button("📊 Envoyer stats sur Telegram", use_container_width=True):
         if send_stats_to_telegram():
-            st.success("✅ Statistiques envoyées sur Telegram!")
-        else:
-            st.error("❌ Échec de l'envoi")
+            st.success("✅ Stats envoyées!")
 
 def show_telegram():
-    """Page Telegram complète"""
-    st.markdown("## 📱 Configuration Telegram")
+    """Page Telegram"""
+    st.markdown("## 📱 Telegram")
     
     token, chat_id = get_telegram_config()
     
@@ -1003,82 +1224,58 @@ def show_telegram():
         st.markdown("""
         ### Configuration requise :
         
-        1. Va sur Telegram et cherche @BotFather
-        2. Crée un nouveau bot avec `/newbot`
-        3. Copie le token fourni
-        4. Ajoute dans les secrets Streamlit :
-        
+        1. Va sur Telegram @BotFather
+        2. Crée un bot avec `/newbot`
+        3. Ajoute dans les secrets Streamlit :
         ```toml
-        TELEGRAM_BOT_TOKEN = "ton_token_ici"
-        TELEGRAM_CHAT_ID = "ton_chat_id_ici"
+        TELEGRAM_BOT_TOKEN = "ton_token"
+        TELEGRAM_CHAT_ID = "ton_chat_id"
         ```
-        
-        Pour obtenir ton chat_id, envoie un message à @userinfobot
         """)
         return
     
     st.success(f"✅ Telegram configuré (Chat ID: {chat_id})")
     
-    # Test de connexion
     if st.button("🔧 Tester la connexion", use_container_width=True):
-        with st.spinner("Test en cours..."):
-            success, msg = test_telegram_connection()
-            if success:
-                st.success(msg)
-            else:
-                st.error(msg)
+        success, msg = test_telegram_connection()
+        if success:
+            st.success(msg)
+        else:
+            st.error(msg)
     
-    # Envoi des statistiques
-    st.markdown("### 📊 Envoyer les statistiques")
-    if st.button("📤 Envoyer les stats maintenant", use_container_width=True):
-        with st.spinner("Envoi en cours..."):
-            if send_stats_to_telegram():
-                st.success("✅ Statistiques envoyées sur Telegram!")
-            else:
-                st.error("❌ Échec de l'envoi")
+    if st.button("📊 Envoyer les stats", use_container_width=True):
+        if send_stats_to_telegram():
+            st.success("✅ Stats envoyées!")
     
-    # Message personnalisé
     send_custom_message()
 
 def show_configuration():
     """Page Configuration"""
     st.markdown("## ⚙️ Configuration")
     
-    st.markdown("### 🤖 Modèle Machine Learning")
+    st.markdown("### 🤖 Modèle ML")
     model_info = load_saved_model()
     if model_info:
-        st.success(f"✅ Modèle chargé avec succès (accuracy: {model_info.get('accuracy', 0):.1%})")
-        if st.button("🔄 Recharger le modèle"):
-            st.cache_resource.clear()
-            st.rerun()
+        st.success(f"✅ Modèle chargé (accuracy: {model_info.get('accuracy', 0):.1%})")
     else:
-        st.warning("⚠️ Aucun modèle trouvé dans le dossier models/")
+        st.warning("⚠️ Aucun modèle trouvé")
     
-    st.markdown("### 🧠 Intelligence Artificielle")
+    st.markdown("### 🧠 IA Groq")
     if get_groq_key():
-        st.success("✅ Clé API Groq configurée")
+        st.success("✅ Clé API configurée")
     else:
-        st.warning("⚠️ Clé API Groq manquante")
+        st.warning("⚠️ Clé API manquante")
     
-    st.markdown("### 📊 Statistiques actuelles")
-    stats = load_user_stats()
+    st.markdown("### 🗑️ Gestion")
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Total prédictions", stats.get('total_predictions', 0))
-    with col2:
-        accuracy = calculate_global_accuracy()
-        st.metric("Précision", f"{accuracy:.1f}%")
-    
-    st.markdown("### 🗑️ Gestion des données")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Effacer l'historique"):
+        if st.button("🗑️ Effacer historique"):
             if HIST_FILE.exists():
                 HIST_FILE.unlink()
                 update_user_stats()
                 st.rerun()
     with col2:
-        if st.button("🔄 Recalculer les stats"):
+        if st.button("🔄 Recalculer stats"):
             update_user_stats()
             st.rerun()
 
@@ -1087,23 +1284,20 @@ def show_configuration():
 # ─────────────────────────────────────────────────────────────
 def main():
     st.set_page_config(
-        page_title="TennisIQ Pro - Paris & Analytics",
+        page_title="TennisIQ Pro - Multi-matchs & Combinés",
         page_icon="🎾",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
-    # CSS personnalisé
     st.markdown("""
     <style>
         .stApp { background: linear-gradient(135deg, #0A1E2C 0%, #1A2E3C 100%); }
         .stProgress > div > div > div > div { background: linear-gradient(90deg, #00DFA2, #0079FF); }
         .stButton > button { background: linear-gradient(90deg, #00DFA2, #0079FF); color: white; border: none; }
-        .stButton > button:hover { background: linear-gradient(90deg, #00DFA2, #0079FF); opacity: 0.9; }
     </style>
     """, unsafe_allow_html=True)
     
-    # Sidebar
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; margin-bottom: 2rem;">
@@ -1111,14 +1305,14 @@ def main():
                 TennisIQ
             </div>
             <div style="font-size: 0.8rem; color: #6C7A89;">
-                Paris & Analytics
+                Multi-matchs & Combinés
             </div>
         </div>
         """, unsafe_allow_html=True)
         
         page = st.radio(
             "Navigation",
-            ["🏠 Dashboard", "🎯 Prédiction", "⏳ En Attente", 
+            ["🏠 Dashboard", "🎯 Multi-matchs", "⏳ En Attente", 
              "📜 Historique", "📈 Statistiques", "📱 Telegram", "⚙️ Configuration"],
             label_visibility="collapsed"
         )
@@ -1132,10 +1326,9 @@ def main():
         st.caption(f"⏳ En attente: {pending}")
         st.caption(f"🔥 Série: {stats.get('current_streak', 0)}")
     
-    # Pages
     if page == "🏠 Dashboard":
         show_dashboard()
-    elif page == "🎯 Prédiction":
+    elif page == "🎯 Multi-matchs":
         show_prediction()
     elif page == "⏳ En Attente":
         show_pending()
