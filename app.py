@@ -18,6 +18,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 import shutil
 import hashlib
+import random
+
+# Pour le scraping réel
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    st.warning("⚠️ BeautifulSoup non installé. Le scraping ne fonctionnera pas. Installe avec: pip install beautifulsoup4")
 
 nest_asyncio.apply()
 warnings.filterwarnings('ignore')
@@ -463,7 +472,7 @@ def handle_telegram_command(text):
         return format_stats_message()
     
     elif cmd == "/today":
-        matches = scrape_daily_matches()
+        matches = get_daily_matches(force_refresh=True)
         if not matches:
             return "📅 Aucun match trouvé aujourd'hui"
         
@@ -473,7 +482,7 @@ def handle_telegram_command(text):
         return message
     
     elif cmd == "/value":
-        matches = scrape_daily_matches()
+        matches = get_daily_matches()
         value_bets = scan_for_value_bets(matches)
         
         if not value_bets:
@@ -659,11 +668,11 @@ def predict_with_ml_model(model_info, player1, player2, surface='Hard'):
         return None
 
 # ─────────────────────────────────────────────────────────────
-# CHARGEMENT DES DONNÉES ATP
+# CHARGEMENT DES DONNÉES ATP (FICHIERS CSV)
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_atp_data():
-    """Charge TOUS les joueurs"""
+    """Charge TOUS les joueurs depuis les fichiers CSV"""
     if not DATA_DIR.exists():
         st.warning(f"📁 Dossier non trouvé: {DATA_DIR}")
         return []
@@ -721,7 +730,7 @@ def load_atp_data():
 
 @st.cache_data(ttl=3600)
 def get_h2h_stats_df():
-    """Charge un DataFrame minimal pour les stats H2H"""
+    """Charge un DataFrame minimal pour les stats H2H depuis les CSV"""
     if not DATA_DIR.exists():
         return pd.DataFrame()
     
@@ -745,7 +754,7 @@ def get_h2h_stats_df():
     return pd.DataFrame()
 
 def get_h2h_stats(player1, player2):
-    """Récupère les stats H2H entre deux joueurs"""
+    """Récupère les stats H2H entre deux joueurs depuis les CSV"""
     df = get_h2h_stats_df()
     if df.empty:
         return None
@@ -766,7 +775,7 @@ def get_h2h_stats(player1, player2):
     }
 
 def calculate_probability(player1, player2, surface, h2h=None, model_info=None):
-    """Calcule la probabilité - Version simplifiée qui fonctionne même sans ML"""
+    """Calcule la probabilité en utilisant d'abord le ML, puis les stats CSV"""
     
     # Essayer d'abord avec le modèle ML si disponible
     if model_info:
@@ -774,20 +783,13 @@ def calculate_probability(player1, player2, surface, h2h=None, model_info=None):
         if ml_proba is not None:
             return ml_proba, True
     
-    # Fallback sur une estimation simple
+    # Fallback sur les stats des CSV
     proba = 0.5
     
     # Ajustement basé sur H2H si disponible
     if h2h and h2h.get('total_matches', 0) > 0:
         wins1 = h2h.get(f'{player1}_wins', 0)
         proba += (wins1 / h2h['total_matches'] - 0.5) * 0.2
-    
-    # Ajustement basé sur le nom (simulation - à remplacer par de vraies stats)
-    top_players = ["Novak Djokovic", "Rafael Nadal", "Roger Federer", "Carlos Alcaraz", "Jannik Sinner"]
-    if player1 in top_players and player2 not in top_players:
-        proba += 0.1
-    elif player2 in top_players and player1 not in top_players:
-        proba -= 0.1
     
     return max(0.05, min(0.95, proba)), False
 
@@ -806,33 +808,154 @@ def calculate_global_accuracy():
     return (stats.get('correct_predictions', 0) / total_valide * 100) if total_valide > 0 else 0
 
 # ─────────────────────────────────────────────────────────────
-# SCRAPING AUTOMATIQUE DES MATCHS
+# SCRAPING RÉEL DES MATCHS (VERSION CORRIGÉE)
 # ─────────────────────────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def scrape_daily_matches():
-    """Récupère les matchs du jour - Version améliorée"""
-    # Simulation avec plus de matchs récents
-    today_matches = [
+def scrape_flashscore():
+    """Scrape les matchs depuis FlashScore"""
+    if not BS4_AVAILABLE:
+        return None
+        
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        url = "https://www.flashscore.fr/tennis/"
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        matches = []
+        
+        # Chercher les matchs (adapté à la structure de FlashScore)
+        event_items = soup.find_all('div', class_='event__match')
+        
+        for item in event_items[:15]:
+            try:
+                home = item.find('div', class_='event__participant--home')
+                away = item.find('div', class_='event__participant--away')
+                
+                if home and away:
+                    p1 = home.text.strip()
+                    p2 = away.text.strip()
+                    
+                    # Déterminer la surface
+                    surface = 'Hard'  # Par défaut
+                    tournament_elem = item.find('div', class_='event__title')
+                    if tournament_elem:
+                        tournament_text = tournament_elem.text.lower()
+                        if 'clay' in tournament_text or 'terre' in tournament_text:
+                            surface = 'Clay'
+                        elif 'grass' in tournament_text or 'gazon' in tournament_text:
+                            surface = 'Grass'
+                    
+                    matches.append({
+                        'p1': p1,
+                        'p2': p2,
+                        'surface': surface,
+                        'tournament': tournament_elem.text if tournament_elem else "Tournoi ATP"
+                    })
+            except:
+                continue
+        
+        return matches if matches else None
+        
+    except Exception as e:
+        print(f"Erreur FlashScore: {e}")
+        return None
+
+def scrape_tennis_explorer():
+    """Scrape les matchs depuis Tennis Explorer"""
+    if not BS4_AVAILABLE:
+        return None
+        
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    
+    try:
+        url = "http://www.tennisexplorer.com/"
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        matches = []
+        
+        # Chercher les matchs du jour
+        today_matches = soup.find('table', class_='results')
+        if today_matches:
+            rows = today_matches.find_all('tr')[1:16]
+            
+            for row in rows:
+                try:
+                    cells = row.find_all('td')
+                    if len(cells) >= 3:
+                        players = cells[0].text.strip().split(' - ')
+                        if len(players) == 2:
+                            p1, p2 = players[0], players[1]
+                            
+                            surface_text = cells[1].text.strip() if len(cells) > 1 else ""
+                            surface = 'Clay' if 'Clay' in surface_text else 'Hard' if 'Hard' in surface_text else 'Grass'
+                            
+                            matches.append({
+                                'p1': p1,
+                                'p2': p2,
+                                'surface': surface,
+                                'tournament': cells[2].text.strip() if len(cells) > 2 else "Tournoi ATP"
+                            })
+                except:
+                    continue
+        
+        return matches if matches else None
+        
+    except Exception as e:
+        print(f"Erreur Tennis Explorer: {e}")
+        return None
+
+def get_mock_matches():
+    """Fallback avec des matchs simulés"""
+    return [
         {'p1': 'Novak Djokovic', 'p2': 'Carlos Alcaraz', 'surface': 'Clay', 'tournament': 'Roland Garros'},
         {'p1': 'Jannik Sinner', 'p2': 'Daniil Medvedev', 'surface': 'Hard', 'tournament': 'Miami Open'},
         {'p1': 'Rafael Nadal', 'p2': 'Stefanos Tsitsipas', 'surface': 'Clay', 'tournament': 'Barcelona Open'},
         {'p1': 'Alexander Zverev', 'p2': 'Andrey Rublev', 'surface': 'Hard', 'tournament': 'Madrid Open'},
         {'p1': 'Holger Rune', 'p2': 'Casper Ruud', 'surface': 'Grass', 'tournament': 'Wimbledon'},
-        {'p1': 'Daniil Medvedev', 'p2': 'Andrey Rublev', 'surface': 'Hard', 'tournament': 'Miami Open'},
-        {'p1': 'Stefanos Tsitsipas', 'p2': 'Holger Rune', 'surface': 'Clay', 'tournament': 'Monte-Carlo'},
-        {'p1': 'Casper Ruud', 'p2': 'Alexander Zverev', 'surface': 'Clay', 'tournament': 'Rome Masters'},
     ]
-    return today_matches
+
+@st.cache_data(ttl=1800)  # Cache 30 minutes
+def get_daily_matches(force_refresh=False):
+    """Récupère les vrais matchs du jour avec fallback"""
+    
+    if force_refresh:
+        st.cache_data.clear()
+    
+    # Essayer d'abord FlashScore
+    matches = scrape_flashscore()
+    if matches and len(matches) > 0:
+        return matches
+    
+    # Puis Tennis Explorer
+    matches = scrape_tennis_explorer()
+    if matches and len(matches) > 0:
+        return matches
+    
+    # Fallback sur les matchs simulés
+    return get_mock_matches()
 
 def auto_load_today_matches():
     """Bouton pour charger automatiquement les matchs du jour"""
-    if st.button("📅 Charger les matchs du jour", use_container_width=True, key="load_today_matches"):
-        with st.spinner("Récupération des matchs..."):
-            matches = scrape_daily_matches()
-            if matches:
-                st.session_state['today_matches'] = matches
-                st.success(f"✅ {len(matches)} matchs chargés")
-                return matches
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("📅 Charger les matchs ATP du jour", use_container_width=True, key="load_today_matches"):
+            with st.spinner("🌐 Récupération des matchs en direct..."):
+                matches = get_daily_matches(force_refresh=True)
+                if matches:
+                    st.session_state['today_matches'] = matches
+                    st.session_state['scrape_time'] = datetime.now().strftime('%H:%M')
+                    st.success(f"✅ {len(matches)} matchs chargés!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ Aucun match trouvé")
+            return matches
     return None
 
 # ─────────────────────────────────────────────────────────────
@@ -1307,7 +1430,7 @@ def show_dashboard():
         if model_info:
             st.success(f"✅ Modèle ML ({model_info.get('accuracy', 0):.1%})")
         else:
-            st.warning("⚠️ Modèle ML non chargé (mode estimation simple actif)")
+            st.warning("⚠️ Modèle ML non chargé (mode stats CSV actif)")
     with col2:
         st.success("✅ IA Groq" if groq_key else "⚠️ IA non configurée")
     with col3:
@@ -1319,10 +1442,10 @@ def show_prediction():
     
     model_info = load_saved_model()
     
-    with st.spinner("Chargement des joueurs..."):
+    with st.spinner("Chargement des joueurs depuis les CSV..."):
         all_players = load_atp_data()
     
-    st.success(f"✅ {len(all_players):,} joueurs disponibles")
+    st.success(f"✅ {len(all_players):,} joueurs disponibles dans la base de données")
     
     # Option de chargement automatique
     col1, col2 = st.columns([1, 3])
@@ -1432,7 +1555,7 @@ def show_prediction():
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.caption(f"{'🤖 ML' if ml_used else '📊 Stats'}")
+                st.caption(f"{'🤖 ML' if ml_used else '📊 CSV'}")
             with col2:
                 conf_color = "🟢" if confidence >= 70 else "🟡" if confidence >= 50 else "🔴"
                 st.caption(f"Confiance: {conf_color} {confidence:.0f}/100")
@@ -1623,7 +1746,7 @@ def show_configuration():
             st.cache_resource.clear()
             st.rerun()
     else:
-        st.warning("⚠️ Aucun modèle trouvé dans le dossier models/ (mode estimation simple actif)")
+        st.warning("⚠️ Aucun modèle trouvé dans le dossier models/ (mode stats CSV actif)")
     
     st.markdown("### 🧠 Intelligence Artificielle")
     if get_groq_key():
@@ -1668,7 +1791,7 @@ def show_configuration():
 # ─────────────────────────────────────────────────────────────
 def main():
     st.set_page_config(
-        page_title="TennisIQ Pro - Ultimate Edition",
+        page_title="TennisIQ Pro - ML & IA",
         page_icon="🎾",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -1689,7 +1812,7 @@ def main():
     if 'last_backup' not in st.session_state:
         st.session_state['last_backup'] = datetime.now()
     
-    if (datetime.now() - st.session_state['last_backup']).seconds >= 86400:  # 24h en secondes
+    if (datetime.now() - st.session_state['last_backup']).seconds >= 86400:
         auto_backup()
         st.session_state['last_backup'] = datetime.now()
     
@@ -1701,12 +1824,11 @@ def main():
                 TennisIQ
             </div>
             <div style="font-size: 0.9rem; color: #6C7A89;">
-                Ultimate Edition
+                ML & IA
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Menu simple avec des boutons radio
         page = st.radio(
             "Navigation",
             ["🏠 Dashboard", "🎯 Multi-matchs", "💎 Value Bets", "🏆 Badges", "📱 Telegram", "⚙️ Configuration"],
@@ -1737,7 +1859,7 @@ def main():
         show_prediction()
     elif page == "💎 Value Bets":
         st.markdown("## 💎 Value Bets en direct")
-        matches = scrape_daily_matches()
+        matches = get_daily_matches()
         value_bets = scan_for_value_bets(matches)
         
         if value_bets:
