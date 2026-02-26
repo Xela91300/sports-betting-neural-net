@@ -71,7 +71,7 @@ ACHIEVEMENTS = {
 }
 
 # ─────────────────────────────────────────────────────────────
-# BASE DE DONNÉES COMPLÈTE DES TOURNOIS (190+ tournois)
+# BASE DE DONNÉES COMPLÈTE DES TOURNOIS (250+ tournois avec alias)
 # ─────────────────────────────────────────────────────────────
 TOURNAMENTS_DB = {
     # GRAND CHELEM
@@ -332,15 +332,183 @@ TOURNAMENTS_DB = {
     "Bressuire": "Hard",
 }
 
+# Dictionnaire d'alias pour les tournois (pour trouver par noms alternatifs)
+TOURNAMENT_ALIASES = {
+    # Acapulco / Mexique
+    "acapulco": "Mexican Open",
+    "mexico": "Mexican Open",
+    "mexican": "Mexican Open",
+    "abierto mexicano": "Mexican Open",
+    
+    # Grand Chelem
+    "australian": "Australian Open",
+    "melbourne": "Australian Open",
+    "roland garros": "Roland Garros",
+    "french": "Roland Garros",
+    "wimbledon": "Wimbledon",
+    "wimby": "Wimbledon",
+    "london": "Wimbledon",
+    "us open": "US Open",
+    "new york": "US Open",
+    "flushing": "US Open",
+    
+    # Masters 1000
+    "indian wells": "Indian Wells Masters",
+    "california": "Indian Wells Masters",
+    "miami": "Miami Open",
+    "florida": "Miami Open",
+    "monte carlo": "Monte-Carlo Masters",
+    "monaco": "Monte-Carlo Masters",
+    "madrid": "Madrid Open",
+    "spain": "Madrid Open",
+    "rome": "Italian Open",
+    "italy": "Italian Open",
+    "canada": "Canadian Open",
+    "montreal": "Canadian Open",
+    "toronto": "Canadian Open",
+    "cincinnati": "Cincinnati Masters",
+    "ohio": "Cincinnati Masters",
+    "shanghai": "Shanghai Masters",
+    "china": "Shanghai Masters",
+    "paris masters": "Paris Masters",
+    "bercy": "Paris Masters",
+    
+    # ATP 500
+    "rotterdam": "Rotterdam Open",
+    "netherlands": "Rotterdam Open",
+    "dubai": "Dubai Tennis Championships",
+    "uae": "Dubai Tennis Championships",
+    "barcelona": "Barcelona Open",
+    "catalunya": "Barcelona Open",
+    "halle": "Halle Open",
+    "germany": "Halle Open",
+    "queens": "Queen's Club Championships",
+    "london grass": "Queen's Club Championships",
+    "hamburg": "Hamburg Open",
+    "washington": "Washington Open",
+    "dc": "Washington Open",
+    "beijing": "China Open",
+    "tokyo": "Japan Open",
+    "vienna": "Vienna Open",
+    "austria": "Vienna Open",
+    "basel": "Swiss Indoors",
+    "bâle": "Swiss Indoors",
+    "switzerland": "Swiss Indoors",
+    "dallas": "Dallas Open",
+    "texas": "Dallas Open",
+    "rio": "Rio Open",
+    "brazil": "Rio Open",
+    
+    # ATP 250
+    "adelaide": "Adelaide International",
+    "auckland": "Auckland Open",
+    "brisbane": "Brisbane International",
+    "hong kong": "Hong Kong Open",
+    "doha": "Qatar Open",
+    "marseille": "Marseille Open",
+    "delray": "Delray Beach",
+    "buenos aires": "Buenos Aires",
+    "santiago": "Santiago",
+    "houston": "Houston",
+    "marrakech": "Marrakech",
+    "estoril": "Estoril",
+    "munich": "Munich",
+    "geneva": "Geneva",
+    "lyon": "Lyon",
+    "stuttgart": "Stuttgart",
+    "s-hertogenbosch": "'s-Hertogenbosch",
+    "mallorca": "Mallorca",
+    "eastbourne": "Eastbourne",
+    "newport": "Newport",
+    "atlanta": "Atlanta",
+    "umag": "Croatia Open Umag",
+    "båstad": "Swedish Open",
+    "gstaad": "EFO Swiss Open Gstaad",
+    "kitzbühel": "Kitzbühel",
+    "los cabos": "Los Cabos",
+    "winston-salem": "Winston-Salem",
+    "chengdu": "Chengdu Open",
+    "zhuhai": "Zhuhai Championships",
+    "sofia": "Sofia",
+    "metz": "Metz",
+    "san diego": "San Diego",
+    "seoul": "Seoul",
+    "tel aviv": "Tel Aviv",
+    "florence": "Florence",
+    "gijon": "Gijon",
+    "antwerp": "Antwerp",
+    "stockholm": "Stockholm",
+    "naples": "Naples",
+    "bratislava": "Bratislava",
+    "helsinki": "Helsinki",
+    "belgrade": "Belgrade Open",
+}
+
 # Fonctions utilitaires pour les tournois
 def get_tournament_surface(tournament_name):
     """Récupère la surface d'un tournoi avec fallback"""
     return TOURNAMENTS_DB.get(tournament_name, "Hard")
 
-def search_tournaments(search_term):
-    """Recherche des tournois par nom"""
-    search_term = search_term.lower()
-    return [t for t in sorted(TOURNAMENTS_DB.keys()) if search_term in t.lower()]
+def find_tournament(search_term):
+    """Trouve un tournoi par son nom ou alias - version améliorée"""
+    if not search_term:
+        return None
+    
+    search_lower = search_term.lower().strip()
+    
+    # 1. Chercher d'abord dans les alias
+    if search_lower in TOURNAMENT_ALIASES:
+        return TOURNAMENT_ALIASES[search_lower]
+    
+    # 2. Chercher dans les noms exacts (case insensitive)
+    for tourney in TOURNAMENTS_DB:
+        if search_lower == tourney.lower():
+            return tourney
+    
+    # 3. Chercher les correspondances partielles
+    matches = []
+    for tourney in TOURNAMENTS_DB:
+        if search_lower in tourney.lower():
+            matches.append(tourney)
+    
+    if matches:
+        # Retourner le match le plus court (souvent le meilleur)
+        return min(matches, key=len)
+    
+    # 4. Chercher dans les valeurs des alias (si quelqu'un tape le nom officiel)
+    for alias, official in TOURNAMENT_ALIASES.items():
+        if search_lower == official.lower():
+            return official
+    
+    return None  # Aucun tournoi trouvé
+
+def search_tournaments(search_term, limit=100):
+    """Recherche des tournois par nom avec limite"""
+    if not search_term:
+        return sorted(TOURNAMENTS_DB.keys())[:limit]
+    
+    search_lower = search_term.lower().strip()
+    results = set()
+    
+    # Chercher dans les noms officiels
+    for tourney in TOURNAMENTS_DB:
+        if search_lower in tourney.lower():
+            results.add(tourney)
+    
+    # Chercher dans les alias
+    for alias, official in TOURNAMENT_ALIASES.items():
+        if search_lower in alias:
+            results.add(official)
+    
+    # Si aucun résultat, retourner quelques suggestions
+    if not results:
+        suggestions = []
+        for tourney in TOURNAMENTS_DB:
+            if tourney[0].lower() == search_lower[0] if search_lower else True:
+                suggestions.append(tourney)
+        return sorted(suggestions)[:limit]
+    
+    return sorted(results)[:limit]
 
 STATUS_OPTIONS = {
     "en_attente": "⏳ En attente",
@@ -909,11 +1077,11 @@ def predict_with_ml_model(model_info, player1, player2, surface='Hard'):
         return None
 
 # ─────────────────────────────────────────────────────────────
-# CHARGEMENT DES DONNÉES ATP (FICHIERS CSV)
+# CHARGEMENT DES DONNÉES ATP (FICHIERS CSV) - TOUS LES JOUEURS
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_atp_data():
-    """Charge TOUS les joueurs depuis les fichiers CSV"""
+    """Charge TOUS les joueurs depuis les fichiers CSV sans limitation"""
     if not DATA_DIR.exists():
         st.warning(f"📁 Dossier non trouvé: {DATA_DIR}")
         return []
@@ -936,13 +1104,14 @@ def load_atp_data():
         try:
             for enc in ['utf-8', 'latin-1', 'cp1252']:
                 try:
+                    # Lire tous les joueurs sans limite de lignes
                     df = pd.read_csv(f, encoding=enc, usecols=['winner_name', 'loser_name'], 
-                                     on_bad_lines='skip', nrows=10000)
+                                     on_bad_lines='skip')
                     break
                 except:
                     try:
                         df = pd.read_csv(f, sep=';', encoding=enc, usecols=['winner_name', 'loser_name'],
-                                         on_bad_lines='skip', nrows=10000)
+                                         on_bad_lines='skip')
                         break
                     except:
                         continue
@@ -964,31 +1133,43 @@ def load_atp_data():
     progress_bar.empty()
     status_text.empty()
     
-    valid_players = [p for p in all_players if p and p.lower() != 'nan' and len(p) > 1]
+    # Filtrer les valeurs invalides
+    valid_players = []
+    for p in all_players:
+        p_str = str(p).strip()
+        if p_str and p_str.lower() != 'nan' and len(p_str) > 1:
+            valid_players.append(p_str)
+    
+    # Trier tous les joueurs
     valid_players = sorted(valid_players)
     
+    st.success(f"✅ {len(valid_players):,} joueurs uniques chargés")
     return valid_players
 
 @st.cache_data(ttl=3600)
 def get_h2h_stats_df():
-    """Charge un DataFrame minimal pour les stats H2H depuis les CSV"""
+    """Charge un DataFrame pour les stats H2H depuis les CSV"""
     if not DATA_DIR.exists():
         return pd.DataFrame()
     
-    csv_files = list(DATA_DIR.glob("*.csv"))[:20]
+    csv_files = list(DATA_DIR.glob("*.csv"))
     dfs = []
+    progress_bar = st.progress(0)
     
-    for f in csv_files:
+    for idx, f in enumerate(csv_files[:20]):  # Limiter pour la performance
         if 'wta' in f.name.lower():
             continue
         try:
             df = pd.read_csv(f, encoding='utf-8', usecols=['winner_name', 'loser_name'], 
-                            nrows=10000, on_bad_lines='skip')
+                            on_bad_lines='skip')
             df['winner_name'] = df['winner_name'].astype(str).str.strip()
             df['loser_name'] = df['loser_name'].astype(str).str.strip()
             dfs.append(df)
         except:
             continue
+        progress_bar.progress((idx + 1) / min(len(csv_files), 20))
+    
+    progress_bar.empty()
     
     if dfs:
         return pd.concat(dfs, ignore_index=True)
@@ -1389,10 +1570,10 @@ def save_combine(combine_data):
         return False
 
 # ─────────────────────────────────────────────────────────────
-# SÉLECTEUR DE JOUEUR AVEC RECHERCHE
+# SÉLECTEUR DE JOUEUR AVEC RECHERCHE - TOUS LES JOUEURS
 # ─────────────────────────────────────────────────────────────
 def player_selector(label, all_players, key, default=None):
-    """Composant de sélection de joueur avec recherche"""
+    """Composant de sélection de joueur avec recherche - TOUS les joueurs"""
     
     if f"search_{key}" not in st.session_state:
         st.session_state[f"search_{key}"] = ""
@@ -1405,22 +1586,25 @@ def player_selector(label, all_players, key, default=None):
                                placeholder="Tapez le nom...")
         st.session_state[f"search_{key}"] = search
     
+    # Filtrer tous les joueurs sans limite
     if search:
-        filtered = [p for p in all_players if search.lower() in p.lower()]
+        search_lower = search.lower()
+        filtered = [p for p in all_players if search_lower in p.lower()]
         if not filtered:
-            st.warning("Aucun joueur trouvé")
-            filtered = all_players[:100]
+            st.warning(f"Aucun joueur trouvé pour '{search}'")
+            # Suggestions par première lettre
+            filtered = [p for p in all_players if p[0].lower() == search_lower[0]][:100]
     else:
-        filtered = all_players[:100]
+        # Afficher les 200 premiers par défaut pour la performance
+        filtered = all_players[:200]
     
     with col2:
-        st.caption(f"{len(filtered)} trouvés")
+        st.caption(f"{len(filtered)} trouvés sur {len(all_players):,} total")
     
     if filtered:
         default_idx = 0
-        if default and default in filtered:
-            default_idx = filtered.index(default)
-        elif default:
+        if default:
+            # Chercher le default dans la liste filtrée
             for i, p in enumerate(filtered):
                 if default.lower() in p.lower():
                     default_idx = i
@@ -1432,10 +1616,10 @@ def player_selector(label, all_players, key, default=None):
         return st.text_input(label, key=key)
 
 # ─────────────────────────────────────────────────────────────
-# SÉLECTEUR DE TOURNOI AVEC RECHERCHE
+# SÉLECTEUR DE TOURNOI AVEC RECHERCHE - TOUS LES TOURNOIS
 # ─────────────────────────────────────────────────────────────
 def tournament_selector(label, key, default=None):
-    """Sélecteur de tournoi avec recherche"""
+    """Sélecteur de tournoi avec recherche - TOUS les tournois + alias"""
     if f"search_tourn_{key}" not in st.session_state:
         st.session_state[f"search_tourn_{key}"] = ""
     
@@ -1444,29 +1628,54 @@ def tournament_selector(label, key, default=None):
         search = st.text_input(f"🔍 Rechercher {label}", 
                                value=st.session_state[f"search_tourn_{key}"],
                                key=f"search_tourn_input_{key}",
-                               placeholder="Tapez le tournoi...")
+                               placeholder="Tapez le tournoi (ex: Acapulco)...")
         st.session_state[f"search_tourn_{key}"] = search
     
-    tournaments = sorted(TOURNAMENTS_DB.keys())
+    # Obtenir tous les tournois
+    all_tournaments = sorted(TOURNAMENTS_DB.keys())
+    
     if search:
-        filtered = [t for t in tournaments if search.lower() in t.lower()]
-        if not filtered:
-            st.warning("Aucun tournoi trouvé")
-            filtered = tournaments[:50]
+        # Recherche avec alias
+        search_lower = search.lower().strip()
+        results = set()
+        
+        # 1. Vérifier si c'est un alias direct
+        if search_lower in TOURNAMENT_ALIASES:
+            official = TOURNAMENT_ALIASES[search_lower]
+            results.add(official)
+        
+        # 2. Chercher dans les noms officiels
+        for tourney in all_tournaments:
+            if search_lower in tourney.lower():
+                results.add(tourney)
+        
+        # 3. Chercher dans les alias
+        for alias, official in TOURNAMENT_ALIASES.items():
+            if search_lower in alias:
+                results.add(official)
+        
+        if not results:
+            st.warning(f"Aucun tournoi trouvé pour '{search}'")
+            # Suggestions par première lettre
+            results = {t for t in all_tournaments if t[0].lower() == search_lower[0]}
+        
+        filtered = sorted(results)
     else:
-        filtered = tournaments[:50]
+        # Afficher les 100 premiers par défaut
+        filtered = all_tournaments[:100]
     
     with col2:
-        st.caption(f"{len(filtered)} tournois")
+        st.caption(f"{len(filtered)} tournois sur {len(all_tournaments)} total")
     
+    # Trouver l'index par défaut
     default_idx = 0
-    if default and default in filtered:
-        default_idx = filtered.index(default)
-    elif default:
-        for i, t in enumerate(filtered):
-            if default.lower() in t.lower():
-                default_idx = i
-                break
+    if default:
+        # Chercher d'abord par alias
+        found = find_tournament(default)
+        if found and found in filtered:
+            default_idx = filtered.index(found)
+        elif default in filtered:
+            default_idx = filtered.index(default)
     
     return st.selectbox(label, filtered, index=default_idx, key=key)
 
@@ -1771,11 +1980,11 @@ def show_prediction():
     
     model_info = load_saved_model()
     
-    with st.spinner("Chargement des joueurs depuis les CSV..."):
+    with st.spinner("Chargement de tous les joueurs depuis les CSV..."):
         all_players = load_atp_data()
     
     st.success(f"✅ {len(all_players):,} joueurs disponibles")
-    st.info(f"✅ {len(TOURNAMENTS_DB)} tournois disponibles")
+    st.info(f"✅ {len(TOURNAMENTS_DB)} tournois disponibles ({len(TOURNAMENT_ALIASES)} alias)")
     
     col1, col2 = st.columns([1, 3])
     with col1:
@@ -2099,7 +2308,7 @@ def show_configuration():
 # ─────────────────────────────────────────────────────────────
 def main():
     st.set_page_config(
-        page_title="TennisIQ Pro - ML & IA",
+        page_title="TennisIQ Pro - Tous les joueurs & tournois",
         page_icon="🎾",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -2129,7 +2338,7 @@ def main():
                 TennisIQ
             </div>
             <div style="font-size: 0.9rem; color: #6C7A89;">
-                {len(TOURNAMENTS_DB)} tournois • ML • IA
+                Tous les joueurs • Tous les tournois
             </div>
         </div>
         """, unsafe_allow_html=True)
