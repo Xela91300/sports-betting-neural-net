@@ -16,7 +16,7 @@ import requests
 import gzip
 import plotly.express as px
 import plotly.graph_objects as go
-from streamlit_option_menu import option_menu
+import shutil
 import hashlib
 
 nest_asyncio.apply()
@@ -124,12 +124,18 @@ def auto_backup():
     
     for file in [HIST_FILE, COMB_HIST_FILE, USER_STATS_FILE, ACHIEVEMENTS_FILE, TRENDS_FILE]:
         if file.exists():
-            shutil.copy(file, BACKUP_DIR / f"{file.stem}_{timestamp}{file.suffix}")
+            try:
+                shutil.copy(file, BACKUP_DIR / f"{file.stem}_{timestamp}{file.suffix}")
+            except:
+                pass
     
     # Nettoyer les vieux backups (>30 jours)
-    for backup in BACKUP_DIR.glob("*"):
-        if (datetime.now() - datetime.fromtimestamp(backup.stat().st_mtime)).days > 30:
-            backup.unlink()
+    try:
+        for backup in BACKUP_DIR.glob("*"):
+            if (datetime.now() - datetime.fromtimestamp(backup.stat().st_mtime)).days > 30:
+                backup.unlink()
+    except:
+        pass
 
 # ─────────────────────────────────────────────────────────────
 # SYSTÈME DE BADGES ET ACHIEVEMENTS
@@ -144,8 +150,11 @@ def load_achievements():
         return {}
 
 def save_achievements(achievements):
-    with open(ACHIEVEMENTS_FILE, 'w') as f:
-        json.dump(achievements, f)
+    try:
+        with open(ACHIEVEMENTS_FILE, 'w') as f:
+            json.dump(achievements, f)
+    except:
+        pass
 
 def check_and_unlock_achievements():
     """Vérifie et débloque les achievements"""
@@ -237,6 +246,176 @@ def send_telegram_message(message, parse_mode='HTML'):
         st.error(f"Erreur Telegram: {str(e)}")
         return False
 
+def format_prediction_message(pred_data, bet_suggestions=None, ai_comment=None):
+    """Formate un message de prédiction pour Telegram"""
+    proba = pred_data.get('proba', 0.5)
+    bar_length = 10
+    filled = int(proba * bar_length)
+    bar = '█' * filled + '░' * (bar_length - filled)
+    
+    emoji_map = {'Hard': '🟦', 'Clay': '🟧', 'Grass': '🟩'}
+    surface_emoji = emoji_map.get(pred_data.get('surface', ''), '🎾')
+    
+    ml_tag = "🤖 " if pred_data.get('ml_used') else ""
+    gagnant = pred_data.get('favori', '?')
+    
+    message = f"""
+<b>{ml_tag}🎾 PRÉDICTION TENNISIQ</b>
+
+<b>Match:</b> {pred_data.get('player1', '?')} vs {pred_data.get('player2', '?')}
+<b>Tournoi:</b> {pred_data.get('tournament', 'Inconnu')}
+<b>Surface:</b> {surface_emoji} {pred_data.get('surface', '?')}
+
+<b>📊 ANALYSE DU MATCH:</b>
+{bar}  {proba:.1%} / {1-proba:.1%}
+
+• {pred_data.get('player1', 'J1')}: <b>{proba:.1%}</b>
+• {pred_data.get('player2', 'J2')}: <b>{1-proba:.1%}</b>
+
+<b>🏆 GAGNANT PRÉDIT: <u>{gagnant}</u></b>
+<b>Confiance:</b> {'🟢' if pred_data.get('confidence', 0) >= 70 else '🟡' if pred_data.get('confidence', 0) >= 50 else '🔴'} {pred_data.get('confidence', 0):.0f}/100
+"""
+    
+    if pred_data.get('odds1') and pred_data.get('odds2'):
+        message += f"""
+<b>Cotes:</b>
+• {pred_data.get('player1', 'J1')}: <code>{pred_data.get('odds1')}</code>
+• {pred_data.get('player2', 'J2')}: <code>{pred_data.get('odds2')}</code>
+"""
+    
+    if bet_suggestions:
+        message += f"\n<b>🎯 PARIS ALTERNATIFS:</b>\n"
+        for bet in bet_suggestions[:3]:
+            conf_icon = '🟢' if bet['confidence'] >= 70 else '🟡' if bet['confidence'] >= 50 else '🔴'
+            message += f"\n{conf_icon} <b>{bet['type']}</b>: {bet['description']}\n"
+            message += f"   Probabilité: {bet['proba']:.1%} | Cote: {bet['cote']:.2f}\n"
+    
+    if pred_data.get('best_value'):
+        bv = pred_data['best_value']
+        edge_color = '🟢' if bv['edge'] > 0.05 else '🟡'
+        message += f"""
+<b>🎯 VALUE BET DÉTECTÉ!</b>
+{edge_color} <b>{bv['joueur']}</b> à <b>{bv['cote']:.2f}</b>
+Edge: <b>{bv['edge']*100:+.1f}%</b>
+"""
+    
+    if ai_comment:
+        clean_comment = ai_comment.replace('<', '&lt;').replace('>', '&gt;')
+        message += f"\n\n<b>🤖 ANALYSE IA:</b>\n{clean_comment}"
+    
+    message += f"\n\n#TennisIQ #{pred_data.get('surface', 'Tennis')}"
+    return message
+
+def format_stats_message():
+    """Formate un message de statistiques pour Telegram"""
+    stats = load_user_stats()
+    history = load_history()
+    
+    total = stats.get('total_predictions', 0)
+    correct = stats.get('correct_predictions', 0)
+    incorrect = stats.get('incorrect_predictions', 0)
+    annules = stats.get('annules_predictions', 0)
+    
+    total_valide = correct + incorrect
+    accuracy = (correct / total_valide * 100) if total_valide > 0 else 0
+    
+    bar_length = 10
+    filled = int(accuracy / 10)
+    bar = '█' * filled + '░' * (bar_length - filled)
+    
+    recent = [p for p in history[-20:] if p.get('statut') in ['gagne', 'perdu']]
+    recent_correct = sum(1 for p in recent if p.get('statut') == 'gagne')
+    recent_acc = (recent_correct / len(recent) * 100) if recent else 0
+    
+    diff = recent_acc - accuracy
+    
+    message = f"""
+<b>📊 STATISTIQUES TENNISIQ</b>
+
+<b>🎯 Performance globale:</b>
+{bar}  {accuracy:.1f}%
+
+<b>📈 Détail:</b>
+• Total prédictions: <b>{total}</b>
+• ✅ Gagnées: <b>{correct}</b> ({accuracy:.1f}%)
+• ❌ Perdues: <b>{incorrect}</b>
+• ⚠️ Annulées: <b>{annules}</b>
+
+<b>🔥 Dernières 20:</b>
+• Correctes: <b>{recent_correct}/{len(recent)}</b>
+• Précision: <b>{recent_acc:.1f}%</b> ({diff:+.1f}% vs globale)
+
+<b>🏆 Records:</b>
+• Meilleure série: <b>{stats.get('best_streak', 0)}</b>
+• Série actuelle: <b>{stats.get('current_streak', 0)}</b> {'🔥' if stats.get('current_streak', 0) >= 5 else ''}
+
+📅 Mise à jour: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+
+#TennisIQ #Stats
+"""
+    return message
+
+def send_prediction_to_telegram(pred_data, bet_suggestions=None, ai_comment=None):
+    return send_telegram_message(format_prediction_message(pred_data, bet_suggestions, ai_comment))
+
+def send_stats_to_telegram():
+    return send_telegram_message(format_stats_message())
+
+def send_custom_message():
+    """Envoie un message personnalisé sur Telegram"""
+    st.markdown("### 📝 Message personnalisé")
+    with st.form("custom_msg_form"):
+        title = st.text_input("Titre", "Message TennisIQ")
+        content = st.text_area("Contenu", height=100, placeholder="Écris ton message ici...")
+        urgent = st.checkbox("🔴 Urgent")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            include_stats = st.checkbox("📊 Inclure les stats")
+        with col2:
+            include_time = st.checkbox("🕐 Inclure la date", True)
+        
+        if st.form_submit_button("📤 Envoyer le message") and content:
+            urgent_tag = "🔴 URGENT - " if urgent else ""
+            date_tag = f"\n\n📅 {datetime.now().strftime('%d/%m/%Y %H:%M')}" if include_time else ""
+            stats_tag = f"\n\n{format_stats_message()}" if include_stats else ""
+            
+            msg = f"<b>{urgent_tag}{title}</b>\n\n{content}{date_tag}{stats_tag}\n\n#TennisIQ"
+            
+            if send_telegram_message(msg):
+                st.success("✅ Message envoyé avec succès sur Telegram !")
+            else:
+                st.error("❌ Échec de l'envoi. Vérifie la configuration Telegram.")
+
+def test_telegram_connection():
+    token, chat_id = get_telegram_config()
+    if not token:
+        return False, "❌ Token manquant"
+    if not chat_id:
+        return False, "❌ Chat ID manquant"
+    try:
+        test_message = f"""
+<b>✅ TEST DE CONNEXION RÉUSSI !</b>
+
+📅 {datetime.now().strftime('%d/%m/%Y %H:%M')}
+🤖 Bot TennisIQ opérationnel
+
+📊 Statistiques actuelles:
+• Prédictions: {len(load_history())}
+• Précision: {calculate_global_accuracy():.1f}%
+
+#TennisIQ #Test
+"""
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {'chat_id': chat_id, 'text': test_message, 'parse_mode': 'HTML'}
+        resp = requests.post(url, json=payload, timeout=15)
+        if resp.status_code == 200:
+            return True, "✅ Connexion réussie ! Message de test envoyé."
+        else:
+            return False, f"❌ Erreur: {resp.text}"
+    except Exception as e:
+        return False, f"❌ Exception: {str(e)}"
+
 def setup_telegram_commands():
     """Configure les commandes du bot Telegram"""
     token, _ = get_telegram_config()
@@ -254,7 +433,10 @@ def setup_telegram_commands():
     ]
     
     url = f"https://api.telegram.org/bot{token}/setMyCommands"
-    requests.post(url, json={"commands": commands})
+    try:
+        requests.post(url, json={"commands": commands})
+    except:
+        pass
 
 def handle_telegram_command(text):
     """Gère les commandes Telegram"""
@@ -269,7 +451,7 @@ def handle_telegram_command(text):
         p2 = parts[2].title()
         surface = parts[3].title() if len(parts) > 3 else "Hard"
         
-        proba, _ = calculate_probability(p1, p2, surface)
+        proba, _ = calculate_probability(p1, p2, surface, None, None)
         pred_data = {
             'player1': p1, 'player2': p2,
             'surface': surface, 'proba': proba,
@@ -281,13 +463,41 @@ def handle_telegram_command(text):
         return format_stats_message()
     
     elif cmd == "/today":
-        return format_today_matches()
+        matches = scrape_daily_matches()
+        if not matches:
+            return "📅 Aucun match trouvé aujourd'hui"
+        
+        message = "<b>📅 MATCHS DU JOUR</b>\n\n"
+        for i, match in enumerate(matches[:10], 1):
+            message += f"{i}. {match['p1']} vs {match['p2']} - {match['surface']}\n"
+        return message
     
     elif cmd == "/value":
-        return scan_and_format_value_bets()
+        matches = scrape_daily_matches()
+        value_bets = scan_for_value_bets(matches)
+        
+        if not value_bets:
+            return "🎯 Aucun value bet détecté aujourd'hui"
+        
+        message = "<b>🎯 VALUE BETS DU JOUR</b>\n\n"
+        for i, vb in enumerate(value_bets[:5], 1):
+            message += f"{i}. <b>{vb['joueur']}</b> @ {vb['cote']}\n"
+            message += f"   Edge: +{vb['edge']:.1f}% | Proba: {vb['proba']:.1%}\n"
+            message += f"   {vb['match']} - {vb['surface']}\n\n"
+        return message
     
     elif cmd == "/badges":
-        return format_badges_message()
+        achievements = load_achievements()
+        if not achievements:
+            return "🏆 Aucun badge débloqué pour le moment"
+        
+        message = "<b>🏆 MES BADGES</b>\n\n"
+        for ach_id, data in achievements.items():
+            if ach_id in ACHIEVEMENTS:
+                ach = ACHIEVEMENTS[ach_id]
+                date = datetime.fromisoformat(data['unlocked_at']).strftime('%d/%m/%Y')
+                message += f"{ach['icon']} <b>{ach['name']}</b>\n{ach['desc']} - {date}\n\n"
+        return message
     
     elif cmd == "/help":
         return """
@@ -303,39 +513,268 @@ def handle_telegram_command(text):
     
     return "Commande non reconnue. Tape /help pour voir les commandes."
 
-def format_today_matches():
-    """Formate les matchs du jour pour Telegram"""
-    matches = scrape_daily_matches()
-    if not matches:
-        return "📅 Aucun match trouvé aujourd'hui"
-    
-    message = "<b>📅 MATCHS DU JOUR</b>\n\n"
-    for i, match in enumerate(matches[:10], 1):
-        message += f"{i}. {match['p1']} vs {match['p2']} - {match['surface']}\n"
-    
-    return message
+# ─────────────────────────────────────────────────────────────
+# GROQ API (IA)
+# ─────────────────────────────────────────────────────────────
+def get_groq_key():
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except:
+        return os.environ.get("GROQ_API_KEY", None)
 
-def format_badges_message():
-    """Formate les badges pour Telegram"""
-    achievements = load_achievements()
-    if not achievements:
-        return "🏆 Aucun badge débloqué pour le moment"
+def call_groq_api(prompt):
+    api_key = get_groq_key()
+    if not api_key:
+        return None
+    try:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 500
+        }
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        return None
+    except Exception as e:
+        st.error(f"Erreur IA: {str(e)}")
+        return None
+
+def analyze_match_with_ai(player1, player2, surface, tournament, proba, best_value=None, bet_suggestions=None):
+    """Génère une analyse IA claire avec le gagnant en évidence"""
+    gagnant = player1 if proba >= 0.5 else player2
+    perdant = player2 if proba >= 0.5 else player1
+    proba_gagnant = proba if proba >= 0.5 else 1-proba
     
-    message = "<b>🏆 MES BADGES</b>\n\n"
-    for ach_id, data in achievements.items():
-        if ach_id in ACHIEVEMENTS:
-            ach = ACHIEVEMENTS[ach_id]
-            date = datetime.fromisoformat(data['unlocked_at']).strftime('%d/%m/%Y')
-            message += f"{ach['icon']} <b>{ach['name']}</b>\n{ach['desc']} - {date}\n\n"
+    vb_txt = f" Value bet détecté sur {best_value['joueur']} (edge {best_value['edge']*100:+.1f}%)" if best_value else ""
     
-    return message
+    prompt = f"""Analyse ce match de tennis de façon claire et concise:
+
+Match: {player1} vs {player2}
+Tournoi: {tournament}
+Surface: {surface}
+
+ANALYSE DES DONNÉES:
+- Probabilité {player1}: {proba:.1%}
+- Probabilité {player2}: {1-proba:.1%}
+- GAGNANT PRÉDIT: {gagnant} ({proba_gagnant:.1%} de chances)
+{vb_txt}
+
+Donne une analyse en 4 points:
+1. Pourquoi {gagnant} est favori (facteurs clés)
+2. Les points faibles de {perdant} dans ce match
+3. {vb_txt if best_value else "Conseil de pari"}
+4. Pronostic final clair
+
+Sois direct et précis."""
+    
+    return call_groq_api(prompt)
+
+# ─────────────────────────────────────────────────────────────
+# CHARGEMENT DU MODÈLE ML
+# ─────────────────────────────────────────────────────────────
+@st.cache_resource
+def load_saved_model():
+    """Charge le modèle ML depuis le dossier models/"""
+    model_path = MODELS_DIR / "tennis_ml_model_complete.pkl"
+    
+    if model_path.exists():
+        try:
+            model_info = joblib.load(model_path)
+            return model_info
+        except:
+            return None
+    return None
+
+def predict_with_ml_model(model_info, player1, player2, surface='Hard'):
+    """Fait une prédiction avec le modèle ML"""
+    if model_info is None:
+        return None
+    
+    try:
+        model = model_info.get('model')
+        scaler = model_info.get('scaler')
+        player_stats = model_info.get('player_stats', {})
+        
+        if model is None or scaler is None:
+            return None
+        
+        s1 = player_stats.get(player1, {})
+        s2 = player_stats.get(player2, {})
+        
+        if not s1 or not s2:
+            return None
+        
+        r1 = max(s1.get('rank', 500.0), 1.0)
+        r2 = max(s2.get('rank', 500.0), 1.0)
+        log_rank_ratio = np.log(r2 / r1)
+        
+        surf_wr_diff = s1.get('surface_wr', {}).get(surface, 0.5) - s2.get('surface_wr', {}).get(surface, 0.5)
+        
+        features = np.array([[
+            log_rank_ratio, 0, 0,
+            1 if surface == 'Clay' else 0,
+            1 if surface == 'Grass' else 0,
+            1 if surface == 'Hard' else 0,
+            0, 0, 0,
+            surf_wr_diff, 0, 0, 0.5,
+            0, 0, 0, 0, 0, 0, 0, 0
+        ]])
+        
+        features_scaled = scaler.transform(features)
+        proba = model.predict_proba(features_scaled)[0][1]
+        
+        return max(0.05, min(0.95, float(proba)))
+    except:
+        return None
+
+# ─────────────────────────────────────────────────────────────
+# CHARGEMENT DES DONNÉES ATP
+# ─────────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def load_atp_data():
+    """Charge TOUS les joueurs"""
+    if not DATA_DIR.exists():
+        st.warning(f"📁 Dossier non trouvé: {DATA_DIR}")
+        return []
+    
+    csv_files = list(DATA_DIR.glob("*.csv"))
+    if not csv_files:
+        st.warning("📁 Aucun fichier CSV trouvé")
+        return []
+    
+    all_players = set()
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for idx, f in enumerate(csv_files):
+        if 'wta' in f.name.lower():
+            continue
+        
+        status_text.text(f"Chargement: {f.name}")
+        
+        try:
+            for enc in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    df = pd.read_csv(f, encoding=enc, usecols=['winner_name', 'loser_name'], 
+                                     on_bad_lines='skip', nrows=10000)
+                    break
+                except:
+                    try:
+                        df = pd.read_csv(f, sep=';', encoding=enc, usecols=['winner_name', 'loser_name'],
+                                         on_bad_lines='skip', nrows=10000)
+                        break
+                    except:
+                        continue
+            else:
+                continue
+            
+            if df is not None:
+                winners = df['winner_name'].dropna().astype(str).str.strip()
+                losers = df['loser_name'].dropna().astype(str).str.strip()
+                
+                all_players.update(winners)
+                all_players.update(losers)
+                
+        except Exception as e:
+            print(f"Erreur avec {f.name}: {e}")
+        
+        progress_bar.progress((idx + 1) / len(csv_files))
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    valid_players = [p for p in all_players if p and p.lower() != 'nan' and len(p) > 1]
+    valid_players = sorted(valid_players)
+    
+    return valid_players
+
+@st.cache_data(ttl=3600)
+def get_h2h_stats_df():
+    """Charge un DataFrame minimal pour les stats H2H"""
+    if not DATA_DIR.exists():
+        return pd.DataFrame()
+    
+    csv_files = list(DATA_DIR.glob("*.csv"))[:20]
+    dfs = []
+    
+    for f in csv_files:
+        if 'wta' in f.name.lower():
+            continue
+        try:
+            df = pd.read_csv(f, encoding='utf-8', usecols=['winner_name', 'loser_name'], 
+                            nrows=10000, on_bad_lines='skip')
+            df['winner_name'] = df['winner_name'].astype(str).str.strip()
+            df['loser_name'] = df['loser_name'].astype(str).str.strip()
+            dfs.append(df)
+        except:
+            continue
+    
+    if dfs:
+        return pd.concat(dfs, ignore_index=True)
+    return pd.DataFrame()
+
+def get_h2h_stats(player1, player2):
+    """Récupère les stats H2H entre deux joueurs"""
+    df = get_h2h_stats_df()
+    if df.empty:
+        return None
+    
+    p1 = player1.strip()
+    p2 = player2.strip()
+    
+    h2h = df[((df['winner_name'] == p1) & (df['loser_name'] == p2)) | 
+             ((df['winner_name'] == p2) & (df['loser_name'] == p1))]
+    
+    if len(h2h) == 0:
+        return None
+    
+    return {
+        'total_matches': len(h2h),
+        f'{p1}_wins': len(h2h[h2h['winner_name'] == p1]),
+        f'{p2}_wins': len(h2h[h2h['winner_name'] == p2]),
+    }
+
+def calculate_probability(player1, player2, surface, h2h=None, model_info=None):
+    """Calcule la probabilité"""
+    if model_info:
+        ml_proba = predict_with_ml_model(model_info, player1, player2, surface)
+        if ml_proba is not None:
+            return ml_proba, True
+    
+    proba = 0.5
+    if h2h and h2h.get('total_matches', 0) > 0:
+        wins1 = h2h.get(f'{player1}_wins', 0)
+        proba += (wins1 / h2h['total_matches'] - 0.5) * 0.2
+    
+    return max(0.05, min(0.95, proba)), False
+
+def calculate_confidence(proba, h2h=None):
+    """Calcule un score de confiance"""
+    confidence = 50
+    if h2h and h2h.get('total_matches', 0) >= 3:
+        confidence += 10
+    confidence += abs(proba - 0.5) * 40
+    return min(100, confidence)
+
+def calculate_global_accuracy():
+    """Calcule la précision globale"""
+    stats = load_user_stats()
+    total_valide = stats.get('correct_predictions', 0) + stats.get('incorrect_predictions', 0)
+    return (stats.get('correct_predictions', 0) / total_valide * 100) if total_valide > 0 else 0
 
 # ─────────────────────────────────────────────────────────────
 # SCRAPING AUTOMATIQUE DES MATCHS
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def scrape_daily_matches():
-    """Simule la récupération des matchs du jour (à remplacer par vrai scraping)"""
+    """Simule la récupération des matchs du jour"""
     # Simulation pour l'exemple
     today_matches = [
         {'p1': 'Novak Djokovic', 'p2': 'Carlos Alcaraz', 'surface': 'Clay', 'tournament': 'Roland Garros'},
@@ -365,9 +804,9 @@ def scan_for_value_bets(matches):
     value_bets = []
     
     for match in matches:
-        proba, _ = calculate_probability(match['p1'], match['p2'], match['surface'])
+        proba, _ = calculate_probability(match['p1'], match['p2'], match['surface'], None, None)
         
-        # Simuler des cotes (à remplacer par des cotes réelles)
+        # Simuler des cotes
         odds1 = round(1/proba * (0.9 + 0.2*np.random.random()), 2)
         odds2 = round(1/(1-proba) * (0.9 + 0.2*np.random.random()), 2)
         
@@ -398,21 +837,201 @@ def scan_for_value_bets(matches):
     
     return sorted(value_bets, key=lambda x: x['edge'], reverse=True)
 
-def scan_and_format_value_bets():
-    """Formate les value bets pour Telegram"""
-    matches = scrape_daily_matches()
-    value_bets = scan_for_value_bets(matches)
+# ─────────────────────────────────────────────────────────────
+# FONCTIONS POUR LES PARIS ALTERNATIFS
+# ─────────────────────────────────────────────────────────────
+def generate_alternative_bets(player1, player2, surface, proba, h2h=None):
+    """Génère des suggestions de paris alternatifs"""
+    suggestions = []
     
-    if not value_bets:
-        return "🎯 Aucun value bet détecté aujourd'hui"
+    suggestions.append({
+        'type': '📊 Over 22.5 games',
+        'description': f"Plus de 22.5 jeux",
+        'proba': 0.62,
+        'cote': 1.80,
+        'confidence': 65
+    })
     
-    message = "<b>🎯 VALUE BETS DU JOUR</b>\n\n"
-    for i, vb in enumerate(value_bets[:5], 1):
-        message += f"{i}. <b>{vb['joueur']}</b> @ {vb['cote']}\n"
-        message += f"   Edge: +{vb['edge']:.1f}% | Proba: {vb['proba']:.1%}\n"
-        message += f"   {vb['match']} - {vb['surface']}\n\n"
+    if proba > 0.65:
+        suggestions.append({
+            'type': '⚖️ Handicap -3.5',
+            'description': f"{player1} gagne avec écart",
+            'proba': 0.58,
+            'cote': 2.10,
+            'confidence': 60
+        })
+    elif proba < 0.35:
+        suggestions.append({
+            'type': '⚖️ Handicap +3.5',
+            'description': f"{player2} perd par moins de 4 jeux",
+            'proba': 0.62,
+            'cote': 1.95,
+            'confidence': 65
+        })
     
-    return message
+    if 0.3 < proba < 0.7:
+        suggestions.append({
+            'type': '🔄 Les deux gagnent un set',
+            'description': f"Chaque joueur gagne au moins un set",
+            'proba': 0.55,
+            'cote': 2.20,
+            'confidence': 55
+        })
+    
+    return suggestions
+
+# ─────────────────────────────────────────────────────────────
+# GESTION DE L'HISTORIQUE
+# ─────────────────────────────────────────────────────────────
+def load_history():
+    if not HIST_FILE.exists():
+        return []
+    try:
+        with open(HIST_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_prediction(pred_data):
+    """Sauvegarde automatiquement une prédiction"""
+    try:
+        history = load_history()
+        pred_data['id'] = hashlib.md5(f"{datetime.now()}{pred_data.get('player1','')}".encode()).hexdigest()[:8]
+        pred_data['statut'] = 'en_attente'
+        history.append(pred_data)
+        with open(HIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history[-1000:], f, indent=2)
+        return True
+    except Exception as e:
+        st.error(f"Erreur sauvegarde: {e}")
+        return False
+
+def update_prediction_status(pred_id, new_status):
+    try:
+        history = load_history()
+        for pred in history:
+            if pred.get('id') == pred_id:
+                pred['statut'] = new_status
+                pred['date_maj'] = datetime.now().isoformat()
+                break
+        with open(HIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=2)
+        update_user_stats()
+        return True
+    except:
+        return False
+
+def load_user_stats():
+    if not USER_STATS_FILE.exists():
+        return {
+            'total_predictions': 0,
+            'correct_predictions': 0,
+            'incorrect_predictions': 0,
+            'annules_predictions': 0,
+            'current_streak': 0,
+            'best_streak': 0
+        }
+    try:
+        with open(USER_STATS_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def update_user_stats():
+    history = load_history()
+    correct = sum(1 for p in history if p.get('statut') == 'gagne')
+    incorrect = sum(1 for p in history if p.get('statut') == 'perdu')
+    
+    current_streak = 0
+    best_streak = 0
+    streak = 0
+    
+    for pred in reversed(history):
+        if pred.get('statut') == 'gagne':
+            streak += 1
+            current_streak = streak
+            best_streak = max(best_streak, streak)
+        elif pred.get('statut') == 'perdu':
+            streak = 0
+            current_streak = 0
+    
+    stats = {
+        'total_predictions': len(history),
+        'correct_predictions': correct,
+        'incorrect_predictions': incorrect,
+        'annules_predictions': sum(1 for p in history if p.get('statut') == 'annule'),
+        'current_streak': current_streak,
+        'best_streak': best_streak
+    }
+    
+    with open(USER_STATS_FILE, 'w') as f:
+        json.dump(stats, f)
+    return stats
+
+def load_combines():
+    if not COMB_HIST_FILE.exists():
+        return []
+    try:
+        with open(COMB_HIST_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_combine(combine_data):
+    try:
+        combines = load_combines()
+        combine_data['date'] = datetime.now().isoformat()
+        combine_data['id'] = hashlib.md5(f"{datetime.now()}".encode()).hexdigest()[:8]
+        combine_data['statut'] = 'en_attente'
+        combines.append(combine_data)
+        with open(COMB_HIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(combines[-200:], f, indent=2)
+        return True
+    except:
+        return False
+
+# ─────────────────────────────────────────────────────────────
+# COMPOSANT DE SÉLECTION DE JOUEUR AVEC RECHERCHE
+# ─────────────────────────────────────────────────────────────
+def player_selector(label, all_players, key, default=None):
+    """Composant de sélection de joueur avec recherche"""
+    
+    if f"search_{key}" not in st.session_state:
+        st.session_state[f"search_{key}"] = ""
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        search = st.text_input(f"🔍 Rechercher {label}", 
+                               value=st.session_state[f"search_{key}"],
+                               key=f"search_input_{key}",
+                               placeholder="Tapez le nom...")
+        st.session_state[f"search_{key}"] = search
+    
+    if search:
+        filtered = [p for p in all_players if search.lower() in p.lower()]
+        if not filtered:
+            st.warning("Aucun joueur trouvé")
+            filtered = all_players[:100]
+    else:
+        filtered = all_players[:100]
+    
+    with col2:
+        st.caption(f"{len(filtered)} trouvés")
+    
+    if filtered:
+        default_idx = 0
+        if default and default in filtered:
+            default_idx = filtered.index(default)
+        elif default:
+            for i, p in enumerate(filtered):
+                if default.lower() in p.lower():
+                    default_idx = i
+                    break
+        
+        selected = st.selectbox(label, filtered, index=default_idx, key=key)
+        return selected
+    else:
+        return st.text_input(label, key=key)
 
 # ─────────────────────────────────────────────────────────────
 # DASHBOARD INTERACTIF AVEC PLOTLY
@@ -427,6 +1046,10 @@ def create_interactive_dashboard():
         return
     
     df = pd.DataFrame(history)
+    if df.empty:
+        st.info("Pas assez de données pour le dashboard")
+        return
+    
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date')
     
@@ -454,7 +1077,10 @@ def create_interactive_dashboard():
         xaxis_title='Date',
         yaxis_title='Précision (%)',
         hovermode='x',
-        template='plotly_dark'
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white')
     )
     st.plotly_chart(fig1, use_container_width=True)
     
@@ -493,62 +1119,12 @@ def create_interactive_dashboard():
             title='Précision par surface',
             xaxis_title='Surface',
             yaxis_title='Précision (%)',
-            template='plotly_dark'
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white')
         )
         st.plotly_chart(fig2, use_container_width=True)
-    
-    # 3. Heatmap des performances
-    st.markdown("### 🔥 Heatmap des performances")
-    
-    # Créer une matrice de performance par mois/surface
-    df['month'] = df['date'].dt.strftime('%Y-%m')
-    pivot = pd.pivot_table(
-        df[df['statut'].isin(['gagne', 'perdu'])],
-        values='correct',
-        index='month',
-        columns='surface',
-        aggfunc='mean'
-    ).fillna(0) * 100
-    
-    if not pivot.empty:
-        fig3 = go.Figure(data=go.Heatmap(
-            z=pivot.values,
-            x=pivot.columns,
-            y=pivot.index,
-            colorscale='Viridis',
-            text=np.round(pivot.values, 1),
-            texttemplate='%{text:.1f}%',
-            textfont={"size": 10},
-            hoverongaps=False
-        ))
-        
-        fig3.update_layout(
-            title='Performance mensuelle par surface (%)',
-            xaxis_title='Surface',
-            yaxis_title='Mois',
-            template='plotly_dark'
-        )
-        st.plotly_chart(fig3, use_container_width=True)
-    
-    # 4. Distribution des confiances
-    st.markdown("### 📊 Distribution des confiances")
-    
-    fig4 = go.Figure()
-    fig4.add_trace(go.Histogram(
-        x=df['confidence'].dropna(),
-        nbinsx=20,
-        marker_color=COLORS['primary'],
-        opacity=0.7,
-        name='Confiance'
-    ))
-    
-    fig4.update_layout(
-        title='Distribution des scores de confiance',
-        xaxis_title='Confiance',
-        yaxis_title='Nombre de prédictions',
-        template='plotly_dark'
-    )
-    st.plotly_chart(fig4, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────
 # ANALYSE DES TENDANCES
@@ -599,8 +1175,11 @@ def analyze_trends():
     trends['recent_trend'] = recent_correct / recent_total * 100 if recent_total > 0 else 0
     
     # Sauvegarder les tendances
-    with open(TRENDS_FILE, 'w') as f:
-        json.dump(trends, f, indent=2)
+    try:
+        with open(TRENDS_FILE, 'w') as f:
+            json.dump(trends, f, indent=2)
+    except:
+        pass
     
     return trends
 
@@ -626,21 +1205,9 @@ def generate_betting_advice():
     return "\n".join(advice)
 
 # ─────────────────────────────────────────────────────────────
-# (Le reste du code existant - load_saved_model, predict_with_ml_model, 
-# load_atp_data, get_all_players, get_h2h_stats, calculate_probability,
-# calculate_confidence, calculate_global_accuracy, generate_alternative_bets,
-# generate_recommended_combines, load_history, save_prediction,
-# update_prediction_status, load_user_stats, update_user_stats,
-# load_combines, save_combine, player_selector, etc.)
+# PAGES DE L'APPLICATION
 # ─────────────────────────────────────────────────────────────
 
-# [INSÉRER ICI TOUTES LES FONCTIONS EXISTANTES DE LA VERSION PRÉCÉDENTE]
-# Pour garder ce message raisonnable, je n'inclus pas les ~1000 lignes existantes
-# Mais elles doivent être présentes dans le fichier final
-
-# ─────────────────────────────────────────────────────────────
-# PAGE DASHBOARD AMÉLIORÉE
-# ─────────────────────────────────────────────────────────────
 def show_dashboard():
     """Page Dashboard améliorée avec tendances et badges"""
     st.markdown("## 🏠 Dashboard")
@@ -726,8 +1293,8 @@ def show_prediction():
     # Configuration
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        n_matches = st.number_input("Nombre de matchs", 1, MAX_MATCHES_ANALYSIS, 
-                                    value=len(st.session_state.get('today_matches', [3])))
+        default_n = len(st.session_state.get('today_matches', [3]))
+        n_matches = st.number_input("Nombre de matchs", 1, MAX_MATCHES_ANALYSIS, value=default_n)
     with col2:
         mise = st.number_input("Mise (€)", 1.0, 1000.0, 10.0)
     with col3:
@@ -746,22 +1313,22 @@ def show_prediction():
     
     for i in range(n_matches):
         with st.expander(f"Match {i+1}", expanded=i==0):
-            default_p1 = today_matches[i]['p1'] if i < len(today_matches) else None
-            default_p2 = today_matches[i]['p2'] if i < len(today_matches) else None
+            default_p1 = today_matches[i]['p1'] if i < len(today_matches) else "Novak Djokovic"
+            default_p2 = today_matches[i]['p2'] if i < len(today_matches) else "Carlos Alcaraz"
             default_tournament = today_matches[i]['tournament'] if i < len(today_matches) else tournaments_list[0]
             
             col1, col2 = st.columns(2)
             
             with col1:
                 p1 = player_selector(f"Joueur 1", all_players, key=f"p1_{i}", 
-                                     default=default_p1 if default_p1 else "Novak Djokovic")
+                                     default=default_p1)
                 odds1 = st.text_input(f"Cote {p1}", key=f"odds1_{i}", placeholder="1.75")
             
             with col2:
                 if p1:
                     players2 = [p for p in all_players if p != p1]
                     p2 = player_selector(f"Joueur 2", players2, key=f"p2_{i}",
-                                         default=default_p2 if default_p2 else "Carlos Alcaraz")
+                                         default=default_p2)
                 else:
                     p2 = player_selector(f"Joueur 2", all_players, key=f"p2_{i}")
                 odds2 = st.text_input(f"Cote {p2}", key=f"odds2_{i}", placeholder="2.10")
@@ -906,45 +1473,6 @@ def show_prediction():
         if new_badges:
             st.balloons()
             st.success("🏆 Nouveaux badges débloqués!")
-        
-        # Génération de combinés
-        if len(all_selections) >= 2:
-            st.markdown("## 🎰 Combinés recommandés")
-            
-            suggestions = generate_recommended_combines(matches_analysis)
-            
-            for idx, suggestion in enumerate(suggestions):
-                with st.expander(f"{suggestion['name']} - {suggestion['nb_matches']} matchs - Proba {suggestion['proba']:.1%}"):
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Probabilité", f"{suggestion['proba']:.1%}")
-                    with col2:
-                        st.metric("Cote", f"{suggestion['cote']:.2f}")
-                    with col3:
-                        gain = mise * suggestion['cote']
-                        st.metric("Gain potentiel", f"{gain:.2f}€")
-                    
-                    st.markdown("**Sélections:**")
-                    for sel in suggestion['selections']:
-                        st.caption(f"• {sel['joueur']} @ {sel['cote']:.2f}")
-                    
-                    combine_data = {
-                        'selections': suggestion['selections'],
-                        'proba_globale': suggestion['proba'],
-                        'cote_globale': suggestion['cote'],
-                        'mise': mise,
-                        'gain_potentiel': gain,
-                        'esperance': suggestion['proba'] * gain - mise,
-                        'nb_matches': suggestion['nb_matches'],
-                        'ml_used': any(m.get('ml_used', False) for m in matches_analysis)
-                    }
-                    
-                    save_combine(combine_data)
-                    
-                    if st.button(f"📱 Envoyer combiné", key=f"tg_comb_{idx}"):
-                        if send_combine_to_telegram(combine_data):
-                            st.success("✅ Combiné envoyé!")
 
 def show_telegram():
     """Page Telegram améliorée avec commandes"""
@@ -1018,7 +1546,7 @@ def show_achievements():
     with col1:
         st.metric("Badges débloqués", f"{len(achievements)}/{len(ACHIEVEMENTS)}")
     with col2:
-        progress = (len(achievements) / len(ACHIEVEMENTS) * 100)
+        progress = (len(achievements) / len(ACHIEVEMENTS) * 100) if ACHIEVEMENTS else 0
         st.progress(progress / 100)
     with col3:
         st.metric("Progression", f"{progress:.0f}%")
@@ -1046,6 +1574,58 @@ def show_achievements():
             </div>
             """, unsafe_allow_html=True)
 
+def show_configuration():
+    """Page Configuration"""
+    st.markdown("## ⚙️ Configuration")
+    
+    st.markdown("### 🤖 Modèle Machine Learning")
+    model_info = load_saved_model()
+    if model_info:
+        st.success(f"✅ Modèle chargé avec succès (accuracy: {model_info.get('accuracy', 0):.1%})")
+        if st.button("🔄 Recharger le modèle"):
+            st.cache_resource.clear()
+            st.rerun()
+    else:
+        st.warning("⚠️ Aucun modèle trouvé dans le dossier models/")
+    
+    st.markdown("### 🧠 Intelligence Artificielle")
+    if get_groq_key():
+        st.success("✅ Clé API Groq configurée")
+    else:
+        st.warning("⚠️ Clé API Groq manquante")
+    
+    st.markdown("### 📊 Statistiques actuelles")
+    stats = load_user_stats()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Total prédictions", stats.get('total_predictions', 0))
+    with col2:
+        accuracy = calculate_global_accuracy()
+        st.metric("Précision", f"{accuracy:.1f}%")
+    
+    st.markdown("### 🗑️ Gestion des données")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🗑️ Effacer l'historique"):
+            if HIST_FILE.exists():
+                HIST_FILE.unlink()
+                update_user_stats()
+                st.rerun()
+    with col2:
+        if st.button("🗑️ Effacer les badges"):
+            if ACHIEVEMENTS_FILE.exists():
+                ACHIEVEMENTS_FILE.unlink()
+                st.rerun()
+    with col3:
+        if st.button("🔄 Recalculer les stats"):
+            update_user_stats()
+            st.rerun()
+    
+    st.markdown("### 💾 Backup manuel")
+    if st.button("📀 Faire un backup maintenant"):
+        auto_backup()
+        st.success("✅ Backup effectué!")
+
 # ─────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────
@@ -1072,11 +1652,11 @@ def main():
     if 'last_backup' not in st.session_state:
         st.session_state['last_backup'] = datetime.now()
     
-    if (datetime.now() - st.session_state['last_backup']).hours >= 24:
+    if (datetime.now() - st.session_state['last_backup']).seconds >= 86400:  # 24h en secondes
         auto_backup()
         st.session_state['last_backup'] = datetime.now()
     
-    # Sidebar avec menu amélioré
+    # Sidebar avec menu simple (sans streamlit-option-menu)
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; margin-bottom: 2rem;">
@@ -1089,19 +1669,11 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        # Menu avec icônes
-        page = option_menu(
-            menu_title=None,
-            options=["Dashboard", "Multi-matchs", "Value Bets", "Badges", "Telegram", "Configuration"],
-            icons=["house", "trophy", "gem", "award", "telegram", "gear"],
-            menu_icon="cast",
-            default_index=0,
-            styles={
-                "container": {"padding": "0!important", "background-color": "transparent"},
-                "icon": {"color": "#00DFA2", "font-size": "20px"},
-                "nav-link": {"font-size": "16px", "text-align": "left", "margin": "0px", "color": "#fff"},
-                "nav-link-selected": {"background-color": "#00DFA2", "color": "#000"},
-            }
+        # Menu simple avec des boutons radio
+        page = st.radio(
+            "Navigation",
+            ["🏠 Dashboard", "🎯 Multi-matchs", "💎 Value Bets", "🏆 Badges", "📱 Telegram", "⚙️ Configuration"],
+            label_visibility="collapsed"
         )
         
         st.divider()
@@ -1121,11 +1693,11 @@ def main():
             st.metric("Série", stats.get('current_streak', 0))
     
     # Navigation
-    if page == "Dashboard":
+    if page == "🏠 Dashboard":
         show_dashboard()
-    elif page == "Multi-matchs":
+    elif page == "🎯 Multi-matchs":
         show_prediction()
-    elif page == "Value Bets":
+    elif page == "💎 Value Bets":
         st.markdown("## 💎 Value Bets en direct")
         matches = scrape_daily_matches()
         value_bets = scan_for_value_bets(matches)
@@ -1147,13 +1719,13 @@ def main():
         else:
             st.info("Aucun value bet détecté pour le moment")
     
-    elif page == "Badges":
+    elif page == "🏆 Badges":
         show_achievements()
     
-    elif page == "Telegram":
+    elif page == "📱 Telegram":
         show_telegram()
     
-    elif page == "Configuration":
+    elif page == "⚙️ Configuration":
         show_configuration()
 
 if __name__ == "__main__":
