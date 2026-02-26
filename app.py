@@ -1641,6 +1641,69 @@ def generate_betting_advice():
     return "\n".join(advice)
 
 # ─────────────────────────────────────────────────────────────
+# PAGE DES PRÉDICTIONS EN ATTENTE
+# ─────────────────────────────────────────────────────────────
+def show_pending():
+    """Page des prédictions en attente pour valider les résultats"""
+    st.markdown("## ⏳ Prédictions en attente")
+    
+    history = load_history()
+    pending = [p for p in history if p.get('statut') == 'en_attente']
+    
+    if not pending:
+        st.info("🎉 Aucune prédiction en attente !")
+        return
+    
+    st.success(f"📊 {len(pending)} prédiction(s) en attente de résultat")
+    
+    # Afficher les prédictions en attente
+    for pred in pending[::-1]:  # Du plus récent au plus ancien
+        with st.expander(f"📅 {pred.get('date', '')[:16]} - {pred['player1']} vs {pred['player2']}", expanded=True):
+            
+            # Informations du match
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Tournoi", pred.get('tournament', 'Inconnu'))
+            with col2:
+                surface_icon = SURFACE_CONFIG.get(pred.get('surface'), {}).get('icon', '🎾')
+                st.metric("Surface", f"{surface_icon} {pred.get('surface', '?')}")
+            with col3:
+                st.metric("Probabilité", f"{pred.get('proba', 0.5):.1%}")
+            
+            # Cotes si disponibles
+            if pred.get('odds1') and pred.get('odds2'):
+                st.caption(f"Cotes: {pred['player1']} @ {pred['odds1']} | {pred['player2']} @ {pred['odds2']}")
+            
+            # Value bet si détecté
+            if pred.get('best_value'):
+                bv = pred['best_value']
+                st.info(f"🎯 Value bet détecté: {bv['joueur']} @ {bv['cote']} (edge: +{bv['edge']*100:.1f}%)")
+            
+            # Boutons pour le résultat
+            st.markdown("### 🎯 Résultat du match")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                if st.button(f"✅ {pred['player1']} gagne", key=f"win1_{pred['id']}", use_container_width=True):
+                    update_prediction_status(pred['id'], 'gagne')
+                    st.rerun()
+            
+            with col2:
+                if st.button(f"✅ {pred['player2']} gagne", key=f"win2_{pred['id']}", use_container_width=True):
+                    update_prediction_status(pred['id'], 'gagne')
+                    st.rerun()
+            
+            with col3:
+                if st.button(f"❌ Match perdu", key=f"loss_{pred['id']}", use_container_width=True):
+                    update_prediction_status(pred['id'], 'perdu')
+                    st.rerun()
+            
+            with col4:
+                if st.button(f"⚠️ Annuler", key=f"cancel_{pred['id']}", use_container_width=True):
+                    update_prediction_status(pred['id'], 'annule')
+                    st.rerun()
+
+# ─────────────────────────────────────────────────────────────
 # PAGES DE L'APPLICATION
 # ─────────────────────────────────────────────────────────────
 
@@ -2073,7 +2136,7 @@ def main():
         
         page = st.radio(
             "Navigation",
-            ["🏠 Dashboard", "🎯 Multi-matchs", "💎 Value Bets", "🏆 Badges", "📱 Telegram", "⚙️ Configuration"],
+            ["🏠 Dashboard", "🎯 Multi-matchs", "⏳ En Attente", "💎 Value Bets", "🏆 Badges", "📱 Telegram", "⚙️ Configuration"],
             label_visibility="collapsed",
             key="navigation"
         )
@@ -2097,6 +2160,8 @@ def main():
         show_dashboard()
     elif page == "🎯 Multi-matchs":
         show_prediction()
+    elif page == "⏳ En Attente":
+        show_pending()
     elif page == "💎 Value Bets":
         st.markdown("## 💎 Value Bets en direct")
         matches = get_daily_matches()
