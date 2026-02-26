@@ -499,52 +499,97 @@ def predict_with_ml_model(model_info, player1, player2, surface='Hard'):
         return None
 
 # ─────────────────────────────────────────────────────────────
-# CHARGEMENT DES DONNÉES ATP
+# CHARGEMENT DES DONNÉES ATP (VERSION CORRIGÉE - TOUS LES JOUEURS)
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_atp_data():
-    """Charge les données ATP depuis le dossier data/"""
+    """Charge TOUTES les données ATP depuis le dossier data/"""
     if not DATA_DIR.exists():
+        st.warning(f"📁 Dossier non trouvé: {DATA_DIR}")
         return pd.DataFrame()
     
     csv_files = list(DATA_DIR.glob("*.csv"))
     if not csv_files:
+        st.warning("📁 Aucun fichier CSV trouvé")
         return pd.DataFrame()
     
+    st.info(f"📊 Chargement de {len(csv_files)} fichiers...")
+    
     atp_dfs = []
-    for f in csv_files[:10]:
+    progress_bar = st.progress(0)
+    
+    for idx, f in enumerate(csv_files):
         if 'wta' in f.name.lower():
             continue
+        
         try:
-            df = pd.read_csv(f, encoding='utf-8', nrows=5000, on_bad_lines='skip')
-            if 'winner_name' in df.columns and 'loser_name' in df.columns:
+            # Essayer différents encodages
+            df = None
+            for enc in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    df = pd.read_csv(f, encoding=enc, on_bad_lines='skip', low_memory=False)
+                    break
+                except:
+                    try:
+                        df = pd.read_csv(f, sep=';', encoding=enc, on_bad_lines='skip', low_memory=False)
+                        break
+                    except:
+                        continue
+            
+            if df is not None and 'winner_name' in df.columns and 'loser_name' in df.columns:
+                # Nettoyer les noms
                 df['winner_name'] = df['winner_name'].astype(str).str.strip()
                 df['loser_name'] = df['loser_name'].astype(str).str.strip()
-                atp_dfs.append(df[['winner_name', 'loser_name']])
-        except:
-            continue
+                
+                # Garder seulement les colonnes essentielles
+                keep_cols = ['winner_name', 'loser_name']
+                df = df[[c for c in keep_cols if c in df.columns]]
+                
+                atp_dfs.append(df)
+        except Exception as e:
+            print(f"Erreur avec {f.name}: {e}")
+        
+        # Mettre à jour la progression
+        progress_bar.progress((idx + 1) / len(csv_files))
+    
+    progress_bar.empty()
     
     if atp_dfs:
-        return pd.concat(atp_dfs, ignore_index=True)
+        df_combined = pd.concat(atp_dfs, ignore_index=True)
+        # Nettoyer les valeurs NaN
+        df_combined = df_combined.dropna(subset=['winner_name', 'loser_name'])
+        
+        # Compter les joueurs uniques
+        all_players = set(df_combined['winner_name'].unique()) | set(df_combined['loser_name'].unique())
+        all_players = {p for p in all_players if p and p.lower() != 'nan' and len(p) > 1}
+        
+        st.success(f"✅ {len(df_combined):,} matchs chargés avec {len(all_players):,} joueurs uniques")
+        return df_combined
+    
     return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_all_players(_df):
-    """Récupère la liste de tous les joueurs"""
+    """Récupère la liste de TOUS les joueurs sans limitation"""
     if _df.empty:
-        return ["Novak Djokovic", "Rafael Nadal", "Roger Federer", "Carlos Alcaraz"]
+        # Fallback si pas de données
+        return ["Novak Djokovic", "Rafael Nadal", "Roger Federer", "Carlos Alcaraz", 
+                "Daniil Medvedev", "Alexander Zverev", "Stefanos Tsitsipas", "Andrey Rublev",
+                "Jannik Sinner", "Holger Rune", "Casper Ruud", "Felix Auger-Aliassime"]
     
     players = set()
     players.update(_df['winner_name'].dropna().unique())
     players.update(_df['loser_name'].dropna().unique())
     
+    # Filtrer les valeurs invalides
     valid_players = []
     for p in players:
         p_str = str(p).strip()
         if p_str and p_str.lower() != 'nan' and len(p_str) > 1:
             valid_players.append(p_str)
     
-    return sorted(valid_players)[:1000]
+    # Trier et retourner TOUS les joueurs (pas de limite)
+    return sorted(valid_players)
 
 def get_h2h_stats(df, player1, player2):
     """Récupère les stats H2H entre deux joueurs"""
@@ -885,11 +930,20 @@ def show_prediction():
     
     model_info = load_saved_model()
     
-    with st.spinner("Chargement des joueurs..."):
+    with st.spinner("Chargement de tous les joueurs..."):
         atp_data = load_atp_data()
         all_players = get_all_players(atp_data)
     
-    st.success(f"✅ {len(all_players)} joueurs disponibles")
+    st.success(f"✅ {len(all_players):,} joueurs disponibles dans la base")
+    
+    # Option de recherche
+    search_term = st.text_input("🔍 Rechercher un joueur", "")
+    if search_term:
+        filtered_players = [p for p in all_players if search_term.lower() in p.lower()]
+        display_players = filtered_players[:100]  # Limiter l'affichage pour la performance
+        st.caption(f"{len(filtered_players)} joueurs trouvés")
+    else:
+        display_players = all_players[:500]  # Afficher les 500 premiers par défaut
     
     # Configuration
     col1, col2, col3, col4 = st.columns(4)
@@ -913,11 +967,11 @@ def show_prediction():
             col1, col2 = st.columns(2)
             
             with col1:
-                p1 = st.selectbox(f"Joueur 1", all_players, key=f"p1_{i}")
+                p1 = st.selectbox(f"Joueur 1", display_players, key=f"p1_{i}")
                 odds1 = st.text_input(f"Cote {p1}", key=f"odds1_{i}", placeholder="1.75")
             
             with col2:
-                players2 = [p for p in all_players if p != p1]
+                players2 = [p for p in display_players if p != p1]
                 p2 = st.selectbox(f"Joueur 2", players2, key=f"p2_{i}")
                 odds2 = st.text_input(f"Cote {p2}", key=f"odds2_{i}", placeholder="2.10")
             
@@ -996,7 +1050,6 @@ def show_prediction():
                 st.caption(f"Confiance: {conf_color} {confidence:.0f}/100")
             with col3:
                 if h2h:
-                    # CORRECTION ICI - Éviter les f-strings imbriquées
                     wins1 = h2h.get(f"{match['player1']}_wins", 0)
                     wins2 = h2h.get(f"{match['player2']}_wins", 0)
                     st.caption(f"H2H: {wins1}-{wins2}")
