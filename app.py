@@ -43,6 +43,7 @@ HIST_FILE         = HIST_DIR / "predictions_history.json"
 COMB_HIST_FILE    = HIST_DIR / "combines_history.json"
 USER_STATS_FILE   = HIST_DIR / "user_stats.json"
 ACHIEVEMENTS_FILE = HIST_DIR / "achievements.json"
+METADATA_FILE     = MODELS_DIR / "model_metadata.json"  # Pour lire les métadonnées
 
 # ─────────────────────────────────────────────────────────────
 # CONSTANTES
@@ -329,6 +330,54 @@ def find_tournament(s):
     return min(m, key=len) if m else None
 
 # ─────────────────────────────────────────────────────────────
+# CHARGEMENT DU MODÈLE ML 77.77% (CORRIGÉ)
+# ─────────────────────────────────────────────────────────────
+@st.cache_resource
+def load_rf_model():
+    """Charge le modèle RF 77.77% depuis le dossier models/"""
+    model_path = MODELS_DIR / "tennis_ml_model_complete.pkl"
+    
+    if model_path.exists():
+        try:
+            model_info = joblib.load(model_path)
+            # Vérifier que le modèle contient les éléments nécessaires
+            if model_info.get('model') and model_info.get('scaler'):
+                return model_info
+        except Exception as e:
+            st.error(f"Erreur chargement modèle: {e}")
+            return None
+    
+    # Essayer de charger depuis GitHub si absent
+    try:
+        with st.spinner("📥 Téléchargement du modèle 77.77%..."):
+            url = "https://github.com/Xela91300/sports-betting-neural-net/releases/latest/download/tennis_ml_model_complete.pkl.gz"
+            response = requests.get(url, timeout=60)
+            if response.status_code == 200:
+                temp_path = MODELS_DIR / "model_temp.pkl.gz"
+                with open(temp_path, "wb") as f:
+                    f.write(response.content)
+                with gzip.open(temp_path, "rb") as f:
+                    model_info = joblib.load(f)
+                joblib.dump(model_info, model_path)
+                temp_path.unlink()
+                return model_info
+    except Exception as e:
+        st.warning(f"⚠️ Impossible de télécharger le modèle: {e}")
+    
+    return None
+
+@st.cache_data
+def load_model_metadata():
+    """Charge les métadonnées du modèle depuis model_metadata.json"""
+    if METADATA_FILE.exists():
+        try:
+            with open(METADATA_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+# ─────────────────────────────────────────────────────────────
 # TELEGRAM — CORRIGÉ ET FIABLE
 # ─────────────────────────────────────────────────────────────
 def get_tg_config():
@@ -499,29 +548,8 @@ FAVORI: {fav} ({max(proba,1-proba):.1%}){f' | {vb}' if vb else ''}
 Réponds en français, sois concis et factuel.""")
 
 # ─────────────────────────────────────────────────────────────
-# MODÈLE ML
+# FEATURES RF (21) — identique au notebook d'entraînement
 # ─────────────────────────────────────────────────────────────
-@st.cache_resource
-def load_model():
-    mp = MODELS_DIR / "tennis_ml_model_complete.pkl"
-    if mp.exists():
-        try: return joblib.load(mp)
-        except: return None
-    try:
-        with st.spinner("📥 Téléchargement du modèle ML..."):
-            r = requests.get(
-                "https://github.com/Xela91300/sports-betting-neural-net/releases/download/v1.0.0/tennis_ml_model_complete.pkl.gz",
-                timeout=60)
-            if r.status_code == 200:
-                tmp = MODELS_DIR / "tmp.pkl.gz"
-                tmp.write_bytes(r.content)
-                with gzip.open(tmp, "rb") as f:
-                    mi = joblib.load(f)
-                joblib.dump(mi, mp); tmp.unlink()
-                return mi
-    except: pass
-    return None
-
 def extract_21_features(ps, p1, p2, surface, level="A", best_of=3, h2h_ratio=0.5):
     s1, s2 = ps.get(p1, {}), ps.get(p2, {})
     r1 = max(s1.get("rank", 500.0), 1.0)
@@ -529,41 +557,52 @@ def extract_21_features(ps, p1, p2, surface, level="A", best_of=3, h2h_ratio=0.5
     sp1, sp2 = s1.get("serve_pct", {}), s2.get("serve_pct", {})
     sr1, sr2 = s1.get("serve_raw", {}), s2.get("serve_raw", {})
     feats = [
-        float(np.log(r2/r1)),
-        (s1.get("rank_points",0) - s2.get("rank_points",0)) / 5000.0,
-        float(s1.get("age",25) - s2.get("age",25)),
-        1.0 if surface=="Clay"  else 0.0,
-        1.0 if surface=="Grass" else 0.0,
-        1.0 if surface=="Hard"  else 0.0,
-        1.0 if level=="G" else 0.0,
-        1.0 if level=="M" else 0.0,
-        1.0 if best_of==5 else 0.0,
-        float(s1.get("surface_wr",{}).get(surface,0.5) - s2.get("surface_wr",{}).get(surface,0.5)),
-        float(s1.get("win_rate",0.5) - s2.get("win_rate",0.5)),
-        float(s1.get("recent_form",0.5) - s2.get("recent_form",0.5)),
+        float(np.log(r2 / r1)),
+        (s1.get("rank_points", 0) - s2.get("rank_points", 0)) / 5000.0,
+        float(s1.get("age", 25) - s2.get("age", 25)),
+        1.0 if surface == "Clay"  else 0.0,
+        1.0 if surface == "Grass" else 0.0,
+        1.0 if surface == "Hard"  else 0.0,
+        1.0 if level == "G" else 0.0,
+        1.0 if level == "M" else 0.0,
+        1.0 if best_of == 5 else 0.0,
+        float(s1.get("surface_wr", {}).get(surface, 0.5) - s2.get("surface_wr", {}).get(surface, 0.5)),
+        float(s1.get("win_rate", 0.5) - s2.get("win_rate", 0.5)),
+        float(s1.get("recent_form", 0.5) - s2.get("recent_form", 0.5)),
         float(h2h_ratio),
-        (sr1.get("ace",0) - sr2.get("ace",0)) / 10.0,
-        (sr1.get("df",0) - sr2.get("df",0)) / 5.0,
-        float(sp1.get("pct_1st_in",0) - sp2.get("pct_1st_in",0)),
-        float(sp1.get("pct_1st_won",0) - sp2.get("pct_1st_won",0)),
-        float(sp1.get("pct_2nd_won",0) - sp2.get("pct_2nd_won",0)),
-        float(sp1.get("pct_bp_saved",0) - sp2.get("pct_bp_saved",0)),
-        float(s1.get("days_since_last",30) - s2.get("days_since_last",30)),
-        float(s1.get("fatigue",0) - s2.get("fatigue",0)),
+        (sr1.get("ace", 0) - sr2.get("ace", 0)) / 10.0,
+        (sr1.get("df",  0) - sr2.get("df",  0)) / 5.0,
+        float(sp1.get("pct_1st_in",   0) - sp2.get("pct_1st_in",   0)),
+        float(sp1.get("pct_1st_won",  0) - sp2.get("pct_1st_won",  0)),
+        float(sp1.get("pct_2nd_won",  0) - sp2.get("pct_2nd_won",  0)),
+        float(sp1.get("pct_bp_saved", 0) - sp2.get("pct_bp_saved", 0)),
+        float(s1.get("days_since_last", 30) - s2.get("days_since_last", 30)),
+        float(s1.get("fatigue", 0) - s2.get("fatigue", 0)),
     ]
     return np.nan_to_num(np.array(feats, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
 
-def predict_ml(mi, p1, p2, surface, tournament="", h2h_ratio=0.5):
-    if mi is None: return None
+# ─────────────────────────────────────────────────────────────
+# PRÉDICTION RF
+# ─────────────────────────────────────────────────────────────
+def predict_rf(p1, p2, surface, tournament="", h2h_ratio_val=0.5):
+    """Prédiction via le RandomForest calibré (77.77% accuracy)."""
+    mi = load_rf_model()
+    if mi is None:
+        return None, "rf_absent"
     try:
-        m = mi.get("model"); sc = mi.get("scaler"); ps = mi.get("player_stats", {})
-        if m is None or sc is None: return None
-        if p1 not in ps or p2 not in ps: return None
+        m  = mi.get("model")
+        sc = mi.get("scaler")
+        ps = mi.get("player_stats", {})
+        if m is None or sc is None:
+            return None, "rf_incomplet"
+        if p1 not in ps or p2 not in ps:
+            return None, f"rf_joueurs_inconnus"
         lv, bo = get_level(tournament)
-        f = extract_21_features(ps, p1, p2, surface, lv, bo, h2h_ratio)
-        p = float(m.predict_proba(sc.transform(f.reshape(1,-1)))[0][1])
-        return max(0.05, min(0.95, p))
-    except: return None
+        f = extract_21_features(ps, p1, p2, surface, lv, bo, h2h_ratio_val)
+        p = float(m.predict_proba(sc.transform(f.reshape(1, -1)))[0][1])
+        return max(0.05, min(0.95, p)), "rf_ok"
+    except Exception as e:
+        return None, f"rf_erreur:{str(e)[:40]}"
 
 # ─────────────────────────────────────────────────────────────
 # DONNÉES CSV
@@ -615,8 +654,9 @@ def h2h_ratio(h2h, p1):
 def calc_proba(p1, p2, surface, tournament="", h2h=None, mi=None):
     ratio = h2h_ratio(h2h, p1)
     if mi:
-        p = predict_ml(mi, p1, p2, surface, tournament, ratio)
-        if p is not None: return p, True
+        p, status = predict_rf(p1, p2, surface, tournament, ratio)
+        if p is not None:
+            return p, True
     proba = 0.5 + (ratio - 0.5) * 0.3
     return max(0.05, min(0.95, proba)), False
 
@@ -648,11 +688,6 @@ def save_pred(pred):
     except: return False
 
 def update_pred_result(pred_id, statut, vainqueur_reel=None):
-    """
-    Met à jour le résultat d'une prédiction.
-    statut: gagne | perdu | annule
-    vainqueur_reel: nom du joueur qui a vraiment gagné (ou None pour abandon)
-    """
     try:
         h = load_history()
         for p in h:
@@ -660,7 +695,6 @@ def update_pred_result(pred_id, statut, vainqueur_reel=None):
                 p["statut"] = statut
                 p["date_maj"] = datetime.now().isoformat()
                 p["vainqueur_reel"] = vainqueur_reel
-                # Calcul automatique si le pronostic était correct
                 if vainqueur_reel:
                     p["pronostic_correct"] = (vainqueur_reel == p.get("favori"))
                 else:
@@ -823,7 +857,8 @@ def show_dashboard():
     stats = load_user_stats()
     h = load_history()
     a = load_ach()
-    mi = load_model()
+    mi = load_rf_model()  # ← CORRIGÉ
+    metadata = load_model_metadata()
 
     correct   = stats.get("correct_predictions", 0)
     wrong     = stats.get("incorrect_predictions", 0)
@@ -832,7 +867,6 @@ def show_dashboard():
     tv        = correct + wrong
     acc       = (correct / tv * 100) if tv > 0 else 0
 
-    # Forme récente pour delta
     recent = [p for p in h[-20:] if p.get("statut") in ["gagne","perdu"]]
     r_acc  = (sum(1 for p in recent if p.get("statut")=="gagne") / len(recent) * 100) if recent else 0
 
@@ -868,7 +902,6 @@ def show_dashboard():
         </div>""", unsafe_allow_html=True)
 
     with col_r:
-        # Statut services
         tg_token, _ = get_tg_config()
         groq_key    = get_groq_key()
         st.markdown(f"""
@@ -881,7 +914,8 @@ def show_dashboard():
         services = []
         if mi:
             ps = mi.get("player_stats", {})
-            services.append(("🤖 Modèle ML", f"{mi.get('accuracy',0):.1%} acc · {len(ps):,} joueurs", True))
+            acc_model = mi.get('accuracy', metadata.get('accuracy', 0))
+            services.append(("🤖 Modèle ML", f"{acc_model:.1%} acc · {len(ps):,} joueurs", True))
         else:
             services.append(("🤖 Modèle ML", "Non chargé — mode CSV actif", False))
         services.append(("🧠 IA Groq", "Connectée" if groq_key else "Non configurée", bool(groq_key)))
@@ -1002,24 +1036,26 @@ def show_dashboard():
         ok, msg = tg_send(format_stats_msg())
         st.success(msg) if ok else st.error(msg)
 
-
 # ─────────────────────────────────────────────────────────────
-# ANALYSE MULTI-MATCHS
+# ANALYSE MULTI-MATCHS (CORRIGÉE)
 # ─────────────────────────────────────────────────────────────
 def show_prediction():
     st.markdown(section_title("🎯 Analyse Multi-matchs", "Prédictions ML avec toutes les features"), unsafe_allow_html=True)
 
-    mi = load_model()
+    mi = load_rf_model()  # ← CORRIGÉ
+    metadata = load_model_metadata()
+
     if mi:
         ps = mi.get("player_stats", {})
+        acc_model = mi.get('accuracy', metadata.get('accuracy', 0))
         st.markdown(f"""
         <div style="background:rgba(0,223,162,0.08);border:1px solid rgba(0,223,162,0.25);
         border-radius:12px;padding:0.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:0.75rem;">
             <span style="font-size:1.2rem;">🤖</span>
             <div>
-                <span style="font-weight:700;color:#00DFA2;">Modèle ML actif</span>
+                <span style="font-weight:700;color:#00DFA2;">Modèle ML actif ({acc_model:.1%} accuracy)</span>
                 <span style="color:{COLORS['gray']};font-size:0.85rem;margin-left:0.75rem;">
-                    {mi.get('accuracy',0):.1%} accuracy · {len(ps):,} joueurs · 21 features
+                    {len(ps):,} joueurs · 21 features · {metadata.get('n_matches', 0):,} matchs entraînés
                 </span>
             </div>
         </div>""", unsafe_allow_html=True)
@@ -1092,7 +1128,6 @@ def show_prediction():
         und  = p2 if proba >= 0.5 else p1
 
         cfg = SURFACE_CFG[surf]
-        # Header match
         st.markdown(f"""
         <div style="background:{COLORS['card_bg']};border:1px solid {COLORS['card_border']};
         border-radius:16px;padding:1.5rem;margin-bottom:0.5rem;">
@@ -1126,18 +1161,15 @@ def show_prediction():
 
         st.progress(float(proba))
 
-        # Confiance + H2H
-        ci = "🟢" if conf>=70 else "🟡" if conf>=50 else "🔴"
         h2h_str = f"H2H {h2h_data['p1_wins']}-{h2h_data['p2_wins']} ({h2h_data['total']} matchs)" if h2h_data else "H2H: aucun"
         st.markdown(f"""
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
-                {stat_pill("Confiance", f"{conf:.0f}/100", "#00DFA2", ci)}
+                {stat_pill("Confiance", f"{conf:.0f}/100", "#00DFA2", "🟢" if conf>=70 else "🟡" if conf>=50 else "🔴")}
                 {stat_pill("H2H", h2h_str, "#0079FF", "📊")}
                 {stat_pill("Format", f"Best of {get_level(tourn)[1]}", "#7A8599", "📋")}
             </div>
         </div>""", unsafe_allow_html=True)
 
-        # Value bet
         best_val = None
         if m["o1"] and m["o2"]:
             try:
@@ -1151,14 +1183,12 @@ def show_prediction():
                     st.success(f"🎯 **VALUE BET !** {best_val['joueur']} @ {best_val['cote']:.2f} · Edge: **+{best_val['edge']*100:.1f}%**")
             except: pass
 
-        # Paris alternatifs
         bets = alt_bets(p1, p2, surf, proba)
         with st.expander("📊 Paris alternatifs"):
             for b in bets:
                 ci2 = "🟢" if b["confidence"]>=65 else "🟡"
                 st.markdown(f"{ci2} **{b['type']}** — {b['description']} · Proba {b['proba']:.1%} · Cote {b['cote']:.2f}")
 
-        # IA
         ai_txt = None
         if use_ai and get_groq_key():
             with st.spinner("🤖 Analyse IA..."):
@@ -1175,7 +1205,6 @@ def show_prediction():
             "date":datetime.now().isoformat()
         }
 
-        # Boutons SÉPARÉS et INDÉPENDANTS
         cb1, cb2 = st.columns(2)
         with cb1:
             if st.button(f"💾 Sauvegarder", key=f"save_{i}", use_container_width=True):
@@ -1189,8 +1218,7 @@ def show_prediction():
                 ok, resp = tg_send(msg)
                 st.success(resp) if ok else st.error(resp)
 
-        # Envoi auto si coché (mais après avoir sauvegardé)
-        if send_tg and i == 0:  # Seulement si case cochée au moment de l'analyse
+        if send_tg and i == 0:
             save_pred(pred_data)
             tg_send(format_pred_msg(pred_data, bets, ai_txt))
 
@@ -1200,7 +1228,6 @@ def show_prediction():
     if nb:
         st.balloons()
         st.success(f"🏆 {len(nb)} nouveau(x) badge(s) débloqué(s) !")
-
 
 # ─────────────────────────────────────────────────────────────
 # EN ATTENTE — PRO avec vainqueur + pronostic
@@ -1221,7 +1248,6 @@ def show_pending():
         </div>""", unsafe_allow_html=True)
         return
 
-    # Compteur
     st.markdown(f"""
     <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1.5rem;">
         <span style="background:rgba(255,178,0,0.15);border:1px solid rgba(255,178,0,0.35);
@@ -1285,12 +1311,10 @@ def show_pending():
             </div>
         </div>""", unsafe_allow_html=True)
 
-        # Boutons résultat — layout propre
         c1, c2, c3 = st.columns([2, 2, 1])
 
         with c1:
             btn_label = f"✅ {p1[:22]} a gagné"
-            btn_color = "✅ Notre pronostic ✓" if fav == p1 else "✅ Notre pronostic ✗"
             if st.button(btn_label, key=f"w1_{pid}", use_container_width=True, type="primary" if fav==p1 else "secondary"):
                 statut = "gagne" if fav == p1 else "perdu"
                 update_pred_result(pid, statut, vainqueur_reel=p1)
@@ -1310,14 +1334,12 @@ def show_pending():
                 update_pred_result(pid, "annule", vainqueur_reel=None)
                 st.rerun()
 
-        # Aide visuelle sur la logique
         if fav == p1:
             st.caption(f"💡 Notre pronostic: {p1} → si {p1} gagne = ✅ GAGNÉ | si {p2} gagne = ❌ PERDU")
         else:
             st.caption(f"💡 Notre pronostic: {p2} → si {p2} gagne = ✅ GAGNÉ | si {p1} gagne = ❌ PERDU")
 
         st.markdown("<br>", unsafe_allow_html=True)
-
 
 # ─────────────────────────────────────────────────────────────
 # STATISTIQUES COMPLÈTES
@@ -1343,7 +1365,6 @@ def show_statistics():
     tv   = len(gagnes) + len(perdus)
     acc  = (len(gagnes) / tv * 100) if tv > 0 else 0
 
-    # ── KPI ──────────────────────────────────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1: st.markdown(big_metric("TOTAL", str(len(df)), None, "📝", "#0079FF"), unsafe_allow_html=True)
     with c2: st.markdown(big_metric("GAGNÉS ✅", str(len(gagnes)), None, "✅", "#00DFA2"), unsafe_allow_html=True)
@@ -1353,7 +1374,6 @@ def show_statistics():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Donut + Table résultats ───────────────────────────
     col_pie, col_table = st.columns([1, 2])
 
     with col_pie:
@@ -1378,7 +1398,6 @@ def show_statistics():
             st.plotly_chart(fig_d, use_container_width=True)
 
     with col_table:
-        # Table résumée par statut + pronostic
         if not fini.empty:
             st.markdown(f"""<div style="font-family:Syne,sans-serif;font-size:0.95rem;
             font-weight:700;color:#E8EDF5;margin-bottom:0.75rem;">📋 Résultats récents avec pronostic</div>""",
@@ -1393,12 +1412,10 @@ def show_statistics():
                 date_ = str(row.get("date",""))[:10]
                 surf_ = row.get("surface","?")
 
-                # Couleur selon résultat
                 if s == "gagne":   sc,si = "#00DFA244","✅"
                 elif s == "perdu": sc,si = "#FF475744","❌"
                 else:              sc,si = "#FFB20044","⚠️"
 
-                # Pronostic correct badge
                 if pc is True:   pb = f'<span style="color:#00DFA2;font-size:0.72rem;">🎯 Pronostic ✓</span>'
                 elif pc is False: pb = f'<span style="color:#FF4757;font-size:0.72rem;">🎯 Pronostic ✗</span>'
                 else:             pb = f'<span style="color:#7A8599;font-size:0.72rem;">⚠️ Abandon</span>'
@@ -1424,7 +1441,6 @@ def show_statistics():
                     </div>
                 </div>""", unsafe_allow_html=True)
 
-    # ── Performance par surface ───────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(f"""<div style="font-family:Syne,sans-serif;font-size:1.1rem;
     font-weight:700;color:#E8EDF5;margin-bottom:1rem;">🎾 Performance par surface</div>""", unsafe_allow_html=True)
@@ -1454,7 +1470,6 @@ def show_statistics():
                 <div style="color:{COLORS['gray']};font-size:0.75rem;margin-top:0.25rem;">{len(sp)} matchs total</div>
             </div>""", unsafe_allow_html=True)
 
-    # ── Détail avec pronostics ────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     if not fini.empty and "pronostic_correct" in fini.columns:
         correct_pred = fini[fini["pronostic_correct"]==True]
@@ -1491,12 +1506,10 @@ def show_statistics():
             </div>
         </div>""", unsafe_allow_html=True)
 
-    # ── Exporter ──────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("📥 Exporter l'historique en CSV"):
         csv = df.to_csv(index=False, encoding="utf-8")
         st.download_button("⬇️ Télécharger CSV", csv, "tennisiq_history.csv", "text/csv")
-
 
 # ─────────────────────────────────────────────────────────────
 # TELEGRAM PAGE
@@ -1534,7 +1547,6 @@ def show_telegram():
         </div>
     </div>""", unsafe_allow_html=True)
 
-    # Actions rapides
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("🔧 Tester la connexion", use_container_width=True):
@@ -1553,7 +1565,6 @@ def show_telegram():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Message personnalisé
     st.markdown(f"""<div style="font-family:Syne,sans-serif;font-size:1rem;
     font-weight:700;color:#E8EDF5;margin-bottom:0.75rem;">✍️ Message personnalisé</div>""",
     unsafe_allow_html=True)
@@ -1577,7 +1588,6 @@ def show_telegram():
                 ok, resp = tg_send(msg)
             st.success(resp) if ok else st.error(resp)
 
-    # Diagnostic
     with st.expander("🔍 Diagnostic avancé"):
         if st.button("Vérifier le bot"):
             try:
@@ -1590,31 +1600,33 @@ def show_telegram():
             except Exception as e:
                 st.error(f"Erreur réseau: {e}")
 
-
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION PAGE
 # ─────────────────────────────────────────────────────────────
 def show_config():
     st.markdown(section_title("⚙️ Configuration", "Gestion du modèle et des données"), unsafe_allow_html=True)
 
-    mi = load_model()
+    mi = load_rf_model()
+    metadata = load_model_metadata()
+
     if mi:
         ps  = mi.get("player_stats", {})
         imp = mi.get("feature_importance", {})
+        acc_model = mi.get('accuracy', metadata.get('accuracy', 0))
         st.markdown(f"""
         <div style="background:rgba(0,223,162,0.06);border:1px solid rgba(0,223,162,0.2);
         border-radius:14px;padding:1.25rem;margin-bottom:1.5rem;">
             <div style="font-family:Syne,sans-serif;font-weight:700;color:#00DFA2;margin-bottom:0.75rem;">
-                🤖 Modèle ML actif
+                🤖 Modèle ML actif ({acc_model:.1%} accuracy)
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;">
-                {big_metric('Accuracy', f"{mi.get('accuracy',0):.1%}", None, '', '#00DFA2')}
+                {big_metric('Accuracy', f"{acc_model:.1%}", None, '', '#00DFA2')}
                 {big_metric('AUC-ROC', f"{mi.get('auc',0):.3f}", None, '', '#0079FF')}
                 {big_metric('Joueurs', f"{len(ps):,}", None, '', '#7A8599')}
-                {big_metric('Matchs train', f"{mi.get('n_matches',0):,}", None, '', '#7A8599')}
+                {big_metric('Matchs', f"{metadata.get('n_matches', mi.get('n_matches', 0)):,}", None, '', '#7A8599')}
             </div>
             <div style="color:{COLORS['gray']};font-size:0.8rem;margin-top:0.75rem;">
-                Entraîné le {mi.get('trained_at','?')[:10]} · Version {mi.get('version','?')}
+                Entraîné le {mi.get('trained_at', metadata.get('trained_at', '?'))[:10]} · Version {mi.get('version', metadata.get('version', '?'))}
             </div>
         </div>""", unsafe_allow_html=True)
 
@@ -1650,7 +1662,6 @@ def show_config():
         if st.button("💾 Backup maintenant", use_container_width=True):
             backup(); st.success("✅ Backup effectué")
 
-
 # ─────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────
@@ -1663,14 +1674,12 @@ def main():
     )
     st.markdown(PRO_CSS, unsafe_allow_html=True)
 
-    # Auto-backup quotidien
     if "last_backup" not in st.session_state:
         st.session_state["last_backup"] = datetime.now()
     if (datetime.now() - st.session_state["last_backup"]).seconds >= 86400:
         backup()
         st.session_state["last_backup"] = datetime.now()
 
-    # ── SIDEBAR ───────────────────────────────────────────
     with st.sidebar:
         st.markdown("""
         <div style="text-align:center;padding:1.5rem 0 1rem;">
@@ -1693,7 +1702,6 @@ def main():
 
         st.markdown("<hr style='border-color:rgba(255,255,255,0.08);'>", unsafe_allow_html=True)
 
-        # Mini stats sidebar
         s = load_user_stats()
         h = load_history()
         acc  = calc_accuracy()
@@ -1721,14 +1729,13 @@ def main():
             </div>
         </div>""", unsafe_allow_html=True)
 
-    # ── ROUTING ───────────────────────────────────────────
     if   page == "🏠 Dashboard":      show_dashboard()
     elif page == "🎯 Analyse":         show_prediction()
     elif page == "⏳ En Attente":      show_pending()
     elif page == "📊 Statistiques":    show_statistics()
     elif page == "💎 Value Bets":
         st.markdown(section_title("💎 Value Bets", "Opportunités détectées automatiquement"), unsafe_allow_html=True)
-        mi = load_model()
+        mi = load_rf_model()
         from_cache = get_matches()
         vbs = []
         for m in from_cache:
@@ -1756,7 +1763,6 @@ def main():
             st.info("Aucun value bet détecté sur les matchs du jour.")
     elif page == "📱 Telegram":        show_telegram()
     elif page == "⚙️ Configuration":   show_config()
-
 
 if __name__ == "__main__":
     main()
