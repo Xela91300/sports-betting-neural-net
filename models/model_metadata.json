@@ -1,0 +1,56 @@
+{
+  "version": "20260227_203230",
+  "accuracy": 0.7777245286257904,
+  "auc": 0.8821134585374444,
+  "brier": 0.13780120279220923,
+  "n_matches": 349509,
+  "n_players": 15932,
+  "trained_at": "2026-02-27T20:32:36.576052",
+  "previous_accuracy": null,
+  "improvement": null,
+  "features": [
+    "log_rank_ratio",
+    "pts_diff_norm",
+    "age_diff",
+    "surf_clay",
+    "surf_grass",
+    "surf_hard",
+    "level_gs",
+    "level_m",
+    "best_of_5",
+    "surf_wr_diff",
+    "career_wr_diff",
+    "recent_form_diff",
+    "h2h_ratio",
+    "ace_diff_norm",
+    "df_diff_norm",
+    "pct_1st_in_diff",
+    "pct_1st_won_diff",
+    "pct_2nd_won_diff",
+    "pct_bp_saved_diff",
+    "days_since_last_diff",
+    "fatigue_diff"
+  ],
+  "top5_features": [
+    [
+      "h2h_ratio",
+      0.56359910287605
+    ],
+    [
+      "surf_wr_diff",
+      0.1589030171287824
+    ],
+    [
+      "career_wr_diff",
+      0.13479193501057263
+    ],
+    [
+      "fatigue_diff",
+      0.06257866024723009
+    ],
+    [
+      "pts_diff_norm",
+      0.017657942061981496
+    ]
+  ]
+}
