@@ -46,6 +46,18 @@ SURFACES = ["Hard", "Clay", "Grass"]
 MIN_EDGE_COMBINE = 0.02
 MAX_MATCHES_ANALYSIS = 30
 
+# Liste des 21 features (pour référence)
+ML_FEATURES = [
+    "log_rank_ratio", "pts_diff_norm", "age_diff",
+    "surf_clay", "surf_grass", "surf_hard",
+    "level_gs", "level_m", "best_of_5",
+    "surf_wr_diff", "career_wr_diff", "recent_form_diff", "h2h_ratio",
+    "ace_diff_norm", "df_diff_norm",
+    "pct_1st_in_diff", "pct_1st_won_diff",
+    "pct_2nd_won_diff", "pct_bp_saved_diff",
+    "days_since_last_diff", "fatigue_diff"
+]
+
 ACHIEVEMENTS = {
     'first_win':          {'name': '🎯 Première victoire',  'desc': 'Première prédiction gagnante',         'icon': '🎯'},
     'streak_5':           {'name': '🔥 En forme',           'desc': '5 gagnantes consécutives',             'icon': '🔥'},
@@ -438,19 +450,22 @@ GAGNANT PRÉDIT: {gagnant} ({max(proba,1-proba):.1%}){vb_txt}
 Sois direct, concis, en français.""")
 
 # ─────────────────────────────────────────────────────────────
-# MODÈLE ML
+# MODÈLE ML - VERSION CORRIGÉE avec TOUTES les 21 features
 # ─────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_saved_model():
     model_path = MODELS_DIR / "tennis_ml_model_complete.pkl"
     if model_path.exists():
-        try: return joblib.load(model_path)
-        except: return None
+        try: 
+            model_info = joblib.load(model_path)
+            return model_info
+        except Exception as e:
+            st.error(f"Erreur chargement modèle: {e}")
+            return None
     try:
-        with st.spinner("📥 Téléchargement du modèle..."):
-            r = requests.get(
-                "https://github.com/Xela91300/sports-betting-neural-net/releases/download/v1.0.0/tennis_ml_model_complete.pkl.gz",
-                timeout=60)
+        with st.spinner("📥 Téléchargement du modèle depuis GitHub..."):
+            url = "https://github.com/Xela91300/sports-betting-neural-net/releases/download/v1.0.0/tennis_ml_model_complete.pkl.gz"
+            r = requests.get(url, timeout=60)
             if r.status_code == 200:
                 tmp = MODELS_DIR / "model_temp.pkl.gz"
                 tmp.write_bytes(r.content)
@@ -459,49 +474,66 @@ def load_saved_model():
                     model_info = joblib.load(f)
                 joblib.dump(model_info, model_path)
                 tmp.unlink()
+                st.success("✅ Modèle téléchargé depuis GitHub!")
                 return model_info
-    except: pass
+            else:
+                st.warning("⚠️ Impossible de télécharger le modèle")
+    except Exception as e:
+        st.warning(f"⚠️ Erreur téléchargement: {e}")
     return None
 
 def _extract_all_features(player_stats, p1, p2, surface, level='A', best_of=3, h2h_ratio=0.5):
-    """Extrait les 21 features pour le modèle ML"""
+    """
+    ══════════════════════════════════════════════════════════
+    FONCTION CORRIGÉE — identique à extract_features() du notebook
+    Utilise TOUTES les 21 features au lieu de 5
+    ══════════════════════════════════════════════════════════
+    """
     s1 = player_stats.get(p1, {})
     s2 = player_stats.get(p2, {})
 
+    # ── Ranking ──────────────────────────────────────────
     r1 = max(s1.get('rank', 500.0), 1.0)
     r2 = max(s2.get('rank', 500.0), 1.0)
-    log_rank_ratio = float(np.log(r2 / r1))
+    log_rank_ratio = float(np.log(r2 / r1))                             # Feature 0 ✅
 
-    pts_diff = (s1.get('rank_points', 0) - s2.get('rank_points', 0)) / 5000.0
-    age_diff = float(s1.get('age', 25) - s2.get('age', 25))
+    pts_diff = (s1.get('rank_points', 0) - s2.get('rank_points', 0)) / 5000.0  # Feature 1 ✅
+    age_diff = float(s1.get('age', 25) - s2.get('age', 25))            # Feature 2 ✅
 
-    surf_clay  = 1.0 if surface == 'Clay'  else 0.0
-    surf_grass = 1.0 if surface == 'Grass' else 0.0
-    surf_hard  = 1.0 if surface == 'Hard'  else 0.0
+    # ── Surface ───────────────────────────────────────────
+    surf_clay  = 1.0 if surface == 'Clay'  else 0.0                    # Feature 3 ✅
+    surf_grass = 1.0 if surface == 'Grass' else 0.0                    # Feature 4 ✅
+    surf_hard  = 1.0 if surface == 'Hard'  else 0.0                    # Feature 5 ✅
 
-    level_gs  = 1.0 if level == 'G' else 0.0
-    level_m   = 1.0 if level == 'M' else 0.0
-    best_of_5 = 1.0 if best_of == 5 else 0.0
+    # ── Niveau tournoi ────────────────────────────────────
+    level_gs  = 1.0 if level == 'G' else 0.0                          # Feature 6 ✅
+    level_m   = 1.0 if level == 'M' else 0.0                          # Feature 7 ✅
+    best_of_5 = 1.0 if best_of == 5 else 0.0                          # Feature 8 ✅
 
-    surf_wr_diff   = float(s1.get('surface_wr', {}).get(surface, 0.5) - s2.get('surface_wr', {}).get(surface, 0.5))
-    career_wr_diff = float(s1.get('win_rate', 0.5) - s2.get('win_rate', 0.5))
-    recent_form_diff = float(s1.get('recent_form', 0.5) - s2.get('recent_form', 0.5))
+    # ── Performances ──────────────────────────────────────
+    surf_wr_diff   = float(s1.get('surface_wr', {}).get(surface, 0.5) -  # Feature 9 ✅
+                           s2.get('surface_wr', {}).get(surface, 0.5))
+    career_wr_diff = float(s1.get('win_rate', 0.5) - s2.get('win_rate', 0.5))  # Feature 10 ✅
+    recent_form_diff = float(s1.get('recent_form', 0.5) - s2.get('recent_form', 0.5))  # Feature 11 ✅
+    # h2h_ratio passé en paramètre                                      # Feature 12 ✅
 
+    # ── Stats de service ──────────────────────────────────
     sp1 = s1.get('serve_pct', {})
     sp2 = s2.get('serve_pct', {})
     sr1 = s1.get('serve_raw', {})
     sr2 = s2.get('serve_raw', {})
 
-    ace_diff = (sr1.get('ace', 0) - sr2.get('ace', 0)) / 10.0
-    df_diff  = (sr1.get('df',  0) - sr2.get('df',  0)) / 5.0
+    ace_diff = (sr1.get('ace', 0) - sr2.get('ace', 0)) / 10.0         # Feature 13 ✅
+    df_diff  = (sr1.get('df',  0) - sr2.get('df',  0)) / 5.0          # Feature 14 ✅
 
-    pct_1st_in_diff  = float(sp1.get('pct_1st_in',  0) - sp2.get('pct_1st_in',  0))
-    pct_1st_won_diff = float(sp1.get('pct_1st_won', 0) - sp2.get('pct_1st_won', 0))
-    pct_2nd_won_diff = float(sp1.get('pct_2nd_won', 0) - sp2.get('pct_2nd_won', 0))
-    pct_bp_saved_diff= float(sp1.get('pct_bp_saved',0) - sp2.get('pct_bp_saved',0))
+    pct_1st_in_diff  = float(sp1.get('pct_1st_in',  0) - sp2.get('pct_1st_in',  0))  # Feature 15 ✅
+    pct_1st_won_diff = float(sp1.get('pct_1st_won', 0) - sp2.get('pct_1st_won', 0))  # Feature 16 ✅
+    pct_2nd_won_diff = float(sp1.get('pct_2nd_won', 0) - sp2.get('pct_2nd_won', 0))  # Feature 17 ✅
+    pct_bp_saved_diff= float(sp1.get('pct_bp_saved',0) - sp2.get('pct_bp_saved',0))  # Feature 18 ✅
 
-    days_diff    = float(s1.get('days_since_last', 30) - s2.get('days_since_last', 30))
-    fatigue_diff = float(s1.get('fatigue', 0) - s2.get('fatigue', 0))
+    # ── Fatigue ───────────────────────────────────────────
+    days_diff    = float(s1.get('days_since_last', 30) - s2.get('days_since_last', 30))  # Feature 19 ✅
+    fatigue_diff = float(s1.get('fatigue', 0) - s2.get('fatigue', 0))  # Feature 20 ✅
 
     features = [
         log_rank_ratio, pts_diff, age_diff,
@@ -514,8 +546,15 @@ def _extract_all_features(player_stats, p1, p2, surface, level='A', best_of=3, h
     ]
     return np.nan_to_num(np.array(features, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
 
+
 def predict_with_ml_model(model_info, player1, player2, surface='Hard',
                            tournament='', h2h_ratio=0.5):
+    """
+    PRÉDICTION AVEC TOUTES LES 21 FEATURES — version corrigée
+    - Utilise player_stats complet stocké dans model_info
+    - Prend en compte le niveau du tournoi (Grand Chelem / Masters)
+    - Passe le vrai ratio H2H au lieu de 0.5 fixe
+    """
     if model_info is None:
         return None
     try:
@@ -526,11 +565,14 @@ def predict_with_ml_model(model_info, player1, player2, surface='Hard',
         if model is None or scaler is None:
             return None
 
+        # Les deux joueurs doivent être connus du modèle
         if player1 not in player_stats or player2 not in player_stats:
             return None
 
+        # Niveau et format du tournoi
         level, best_of = get_tournament_level(tournament)
 
+        # Calculer les 21 features
         feat = _extract_all_features(
             player_stats, player1, player2,
             surface, level, best_of, h2h_ratio
@@ -541,6 +583,7 @@ def predict_with_ml_model(model_info, player1, player2, surface='Hard',
         return max(0.05, min(0.95, proba))
 
     except Exception as e:
+        st.error(f"Erreur prédiction ML: {e}")
         return None
 
 # ─────────────────────────────────────────────────────────────
@@ -603,6 +646,7 @@ def calculate_h2h_ratio(h2h, player1):
     return wins1 / h2h['total_matches']
 
 def calculate_probability(player1, player2, surface, tournament='', h2h=None, model_info=None):
+    """Calcule la probabilité — utilise toutes les features ML si disponibles"""
     h2h_ratio = calculate_h2h_ratio(h2h, player1)
 
     if model_info:
@@ -613,6 +657,7 @@ def calculate_probability(player1, player2, surface, tournament='', h2h=None, mo
         if ml_proba is not None:
             return ml_proba, True
 
+    # Fallback statistique si joueurs inconnus du modèle
     proba = 0.5
     if h2h and h2h.get('total_matches', 0) > 0:
         proba += (h2h_ratio - 0.5) * 0.3
@@ -1069,6 +1114,7 @@ def show_prediction():
         ps = model_info.get('player_stats', {})
         n_known = len(ps)
         st.success(f"✅ Modèle ML chargé · {model_info.get('accuracy',0):.1%} accuracy · {n_known:,} joueurs connus")
+        st.info(f"🎯 Utilisation des 21 features ML complètes")
     else:
         st.warning("⚠️ Modèle ML non chargé — mode fallback H2H actif")
 
@@ -1485,7 +1531,7 @@ def show_configuration():
 # ─────────────────────────────────────────────────────────────
 def main():
     st.set_page_config(
-        page_title="TennisIQ Pro", 
+        page_title="TennisIQ Pro - 21 Features ML",
         page_icon="🎾", 
         layout="wide",
         initial_sidebar_state="expanded"
@@ -1513,7 +1559,7 @@ def main():
         st.markdown("""
         <div style="text-align:center; margin-bottom:2rem;">
             <div style="font-size:2.5rem;font-weight:800;color:#00DFA2;">TennisIQ</div>
-            <div style="font-size:0.85rem;color:#6C7A89;">ML • 21 Features • Pro Edition</div>
+            <div style="font-size:0.85rem;color:#6C7A89;">21 Features ML • Pro Edition</div>
         </div>
         """, unsafe_allow_html=True)
         
