@@ -449,7 +449,7 @@ def call_groq(prompt):
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-            json={"model": "mixtral-8x7b-32768",  # Modèle mis à jour (actif)
+            json={"model": "llama-3.3-70b-versatile",  # Modèle mis à jour (actif)
                   "messages": [{"role": "user", "content": prompt}],
                   "temperature": 0.3, "max_tokens": 500},
             timeout=30
@@ -1070,7 +1070,7 @@ def show_prediction():
     # Paramètres d'analyse dans la barre latérale
     with st.sidebar:
         st.markdown("### Paramètres d'analyse")
-        n = st.number_input("Nombre de matchs", 1, MAX_MATCHES, 2)
+        n = st.slider("Nombre de matchs à analyser", min_value=1, max_value=MAX_MATCHES, value=2, step=1)
         ia_options = ["Aucune"]
         if get_groq_key(): ia_options.append("Groq")
         if get_deepseek_key(): ia_options.append("DeepSeek")
