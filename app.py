@@ -420,7 +420,7 @@ def format_stats_msg():
         + datetime.now().strftime("%d/%m/%Y %H:%M") + " #TennisIQ"
     )
 
-# --- Fonctions pour les clés API (lecture depuis les secrets uniquement) ---
+# --- Fonctions pour les clés API (lecture depuis les secrets) ---
 def get_groq_key():
     try:
         return st.secrets["GROQ_API_KEY"]
@@ -449,7 +449,7 @@ def call_groq(prompt):
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-            json={"model": "openai/gpt-oss-120b",  # Modèle spécifié
+            json={"model": "mixtral-8x7b-32768",  # Modèle mis à jour (actif)
                   "messages": [{"role": "user", "content": prompt}],
                   "temperature": 0.3, "max_tokens": 500},
             timeout=30
@@ -458,6 +458,10 @@ def call_groq(prompt):
             return r.json()["choices"][0]["message"]["content"]
         elif r.status_code == 401:
             st.error("❌ Groq : clé API invalide. Vérifiez votre clé dans les secrets.")
+            return None
+        elif r.status_code == 400:
+            # Gestion spécifique pour modèle décommissionné ou autre erreur de requête
+            st.error(f"❌ Groq : erreur 400 - {r.json().get('error', {}).get('message', 'Requête invalide')}")
             return None
         else:
             st.error(f"Erreur Groq ({r.status_code}): {r.text}")
