@@ -456,6 +456,9 @@ def call_groq(prompt):
         )
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"]
+        elif r.status_code == 401:
+            st.error("❌ Groq : clé API invalide. Vérifiez votre clé dans les secrets.")
+            return None
         else:
             st.error(f"Erreur Groq ({r.status_code}): {r.text}")
             return None
@@ -486,6 +489,9 @@ def call_deepseek(prompt):
         r = requests.post(url, headers=headers, json=payload, timeout=30)
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"]
+        elif r.status_code == 402:
+            st.error("❌ DeepSeek : solde insuffisant. Rechargez votre compte ou choisissez une autre IA.")
+            return None
         else:
             st.error(f"Erreur DeepSeek ({r.status_code}): {r.text}")
             return None
