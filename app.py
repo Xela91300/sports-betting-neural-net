@@ -1890,4 +1890,4 @@ elif page == "⚙️ Configuration":   show_config()
 ```
 
 if **name** == “**main**”:
-main()
+main() 
