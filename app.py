@@ -351,43 +351,63 @@ return min(m, key=len) if m else None
 
 # ─────────────────────────────────────────────────────────────
 
-@st.cache_resource
-def load_rf_model():
-model_path = MODELS_DIR / “tennis_ml_model_complete.pkl”
-if model_path.exists():
-try:
-model_info = joblib.load(model_path)
-if model_info.get(‘model’) and model_info.get(‘scaler’):
-return model_info
-except Exception as e:
-st.error(f”Erreur chargement modèle: {e}”)
-return None
-try:
-with st.spinner(“📥 Téléchargement du modèle 77.77%…”):
-url = “https://github.com/Xela91300/sports-betting-neural-net/releases/latest/download/tennis_ml_model_complete.pkl.gz”
+def _download_model_gz(model_path):
+url = (
+“https://github.com/Xela91300/sports-betting-neural-net”
+“/releases/latest/download/tennis_ml_model_complete.pkl.gz”
+)
 response = requests.get(url, timeout=60)
-if response.status_code == 200:
-temp_path = MODELS_DIR / “model_temp.pkl.gz”
-with open(temp_path, “wb”) as f:
-f.write(response.content)
-with gzip.open(temp_path, “rb”) as f:
-model_info = joblib.load(f)
-joblib.dump(model_info, model_path)
-temp_path.unlink()
-return model_info
-except Exception as e:
-st.warning(f”⚠️ Impossible de télécharger le modèle: {e}”)
+if response.status_code != 200:
 return None
+temp_path = MODELS_DIR / “model_temp.pkl.gz”
+temp_path.write_bytes(response.content)
+with gzip.open(temp_path, “rb”) as gz:
+model_info = joblib.load(gz)
+joblib.dump(model_info, model_path)
+temp_path.unlink(missing_ok=True)
+return model_info
 
-@st.cache_data
+def load_rf_model():
+# Cache dans session_state — évite inspect.getsource / tokenize (bug Python 3.10)
+if “rf_model_cache” in st.session_state:
+return st.session_state[“rf_model_cache”]
+
+```
+model_path = MODELS_DIR / "tennis_ml_model_complete.pkl"
+
+model_info = None
+if model_path.exists():
+    try:
+        candidate = joblib.load(model_path)
+        if candidate.get("model") and candidate.get("scaler"):
+            model_info = candidate
+    except Exception as e:
+        st.error(f"Erreur chargement modèle: {e}")
+
+if model_info is None:
+    try:
+        with st.spinner("📥 Téléchargement du modèle..."):
+            model_info = _download_model_gz(model_path)
+    except Exception as e:
+        st.warning(f"⚠️ Impossible de télécharger le modèle: {e}")
+
+st.session_state["rf_model_cache"] = model_info
+return model_info
+```
+
 def load_model_metadata():
+# Cache simple dans session_state — même raison que load_rf_model
+if “model_metadata_cache” in st.session_state:
+return st.session_state[“model_metadata_cache”]
+result = {}
 if METADATA_FILE.exists():
 try:
-with open(METADATA_FILE, ‘r’) as f:
-return json.load(f)
-except:
-return {}
-return {}
+with open(METADATA_FILE, “r”) as fh:
+result = json.load(fh)
+except Exception:
+result = {}
+st.session_state[“model_metadata_cache”] = result
+return result
 
 # ─────────────────────────────────────────────────────────────
 
