@@ -187,6 +187,12 @@ details { background: var(--card) !important; border: 1px solid var(--border) !i
 hr { border-color: var(--border) !important; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .stButton > button { font-size: 0.8rem; padding: 0.3rem 0.6rem; }
+    [data-testid="column"] { min-width: 100% !important; }
+    .st-expander { padding: 0 !important; }
+}
 </style>
 """
 
@@ -443,7 +449,7 @@ def call_groq(prompt):
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-            json={"model": "llama3-8b-8192",  # Changé pour un modèle plus accessible
+            json={"model": "llama3-8b-8192",
                   "messages": [{"role": "user", "content": prompt}],
                   "temperature": 0.3, "max_tokens": 500},
             timeout=30
@@ -502,7 +508,7 @@ def call_claude(prompt):
             "content-type": "application/json"
         }
         data = {
-            "model": "claude-3-haiku-20240307",  # Modèle économique
+            "model": "claude-3-haiku-20240307",
             "max_tokens": 500,
             "messages": [{"role": "user", "content": prompt}]
         }
@@ -1051,25 +1057,25 @@ def show_prediction():
     with st.spinner("Chargement des joueurs..."):
         all_p = load_players()
 
-    c1, c2, c3 = st.columns(3)
-    with c1: n = st.number_input("Nombre de matchs", 1, MAX_MATCHES, 2)
-    with c2:
-        # Sélecteur d'IA
+    # Paramètres d'analyse dans la barre latérale
+    with st.sidebar:
+        st.markdown("### Paramètres d'analyse")
+        n = st.number_input("Nombre de matchs", 1, MAX_MATCHES, 2)
         ia_options = ["Aucune"]
         if get_groq_key(): ia_options.append("Groq")
         if get_deepseek_key(): ia_options.append("DeepSeek")
         if get_claude_key(): ia_options.append("Claude")
-        # Par défaut, choisir la première IA disponible si présente, sinon "Aucune"
         default_ia = "Aucune"
         if len(ia_options) > 1:
             default_ia = ia_options[1]  # première IA disponible
         ia_choice = st.selectbox("IA pour analyse", ia_options, index=ia_options.index(default_ia))
-    with c3: send_tg = st.checkbox("Envoi Telegram auto", False)
+        send_tg = st.checkbox("Envoi Telegram auto", False)
 
     inputs = []
     for i in range(n):
         with st.expander("Match " + str(i+1), expanded=(i==0)):
-            ct, cs = st.columns([3,1])
+            # Première ligne : tournoi et surface
+            ct, cs = st.columns([3, 1])
             with ct:
                 tourn = tourn_sel("Tournoi", "t"+str(i), "Roland Garros")
             with cs:
@@ -1086,6 +1092,7 @@ def show_prediction():
                     + ("<div style=\"font-size:0.7rem;color:#7A8599;\">Best of 5</div>" if bo==5 else "")
                     + "</div>", unsafe_allow_html=True)
 
+            # Deuxième ligne : joueurs et cotes
             cp1, cp2 = st.columns(2)
             with cp1:
                 p1 = player_sel("Joueur 1", all_p, "p1_"+str(i))
@@ -1194,6 +1201,8 @@ def show_prediction():
                                + "  Edge:+" + str(round(best_val["edge"]*100,1)) + "%")
             except Exception:
                 pass
+        else:
+            st.caption("Renseignez les cotes pour détecter des value bets")
 
         bets = alt_bets(p1, p2, surf, proba)
         with st.expander("Paris alternatifs"):
@@ -1497,7 +1506,6 @@ def show_config():
         st.info("Placer tennis_ml_model_complete.pkl dans models/")
 
     st.markdown("---")
-    # Ajout de tests pour chaque IA
     st.subheader("Tests des IA")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1581,7 +1589,7 @@ def main():
             "ML Pro Edition</div></div>",
             unsafe_allow_html=True)
 
-        page = st.radio("Nav",
+        page = st.radio("Navigation",
                         ["Dashboard","Analyse","En Attente","Statistiques",
                          "Value Bets","Telegram","Configuration"],
                         label_visibility="collapsed")
