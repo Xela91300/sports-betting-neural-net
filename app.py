@@ -169,7 +169,6 @@ SURFACE_CFG = {
 }
 
 PRO_CSS = """
-
 <style>
 @import url("https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap");
 :root {
@@ -189,7 +188,6 @@ hr { border-color: var(--border) !important; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
 </style>
-
 """
 
 def surface_badge(surface):
@@ -416,32 +414,118 @@ def format_stats_msg():
         + datetime.now().strftime("%d/%m/%Y %H:%M") + " #TennisIQ"
     )
 
+# --- Fonctions pour les clés API ---
 def get_groq_key():
     try:
         return st.secrets["GROQ_API_KEY"]
     except Exception:
         return os.environ.get("GROQ_API_KEY")
 
+def get_deepseek_key():
+    try:
+        return st.secrets["DEEPSEEK_API_KEY"]
+    except Exception:
+        return os.environ.get("DEEPSEEK_API_KEY")
+
+def get_claude_key():
+    try:
+        return st.secrets["ANTHROPIC_API_KEY"]
+    except Exception:
+        return os.environ.get("ANTHROPIC_API_KEY")
+
+# --- Appels API pour chaque IA ---
 def call_groq(prompt):
     key = get_groq_key()
     if not key:
+        st.error("Clé API Groq non configurée.")
         return None
     try:
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile",
+            json={"model": "llama3-8b-8192",  # Changé pour un modèle plus accessible
                   "messages": [{"role": "user", "content": prompt}],
                   "temperature": 0.3, "max_tokens": 500},
             timeout=30
         )
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"]
+        else:
+            st.error(f"Erreur Groq ({r.status_code}): {r.text}")
+            return None
+    except requests.exceptions.Timeout:
+        st.error("Timeout de l'API Groq.")
         return None
-    except Exception:
+    except Exception as e:
+        st.error(f"Exception lors de l'appel Groq : {e}")
         return None
 
-def ai_analysis(p1, p2, surface, tournament, proba, best_value=None):
+def call_deepseek(prompt):
+    key = get_deepseek_key()
+    if not key:
+        st.error("Clé API DeepSeek non configurée.")
+        return None
+    try:
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 500
+        }
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        if r.status_code == 200:
+            return r.json()["choices"][0]["message"]["content"]
+        else:
+            st.error(f"Erreur DeepSeek ({r.status_code}): {r.text}")
+            return None
+    except requests.exceptions.Timeout:
+        st.error("Timeout de l'API DeepSeek.")
+        return None
+    except Exception as e:
+        st.error(f"Exception lors de l'appel DeepSeek : {e}")
+        return None
+
+def call_claude(prompt):
+    key = get_claude_key()
+    if not key:
+        st.error("Clé API Claude (Anthropic) non configurée.")
+        return None
+    try:
+        headers = {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        data = {
+            "model": "claude-3-haiku-20240307",  # Modèle économique
+            "max_tokens": 500,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        if r.status_code == 200:
+            return r.json()["content"][0]["text"]
+        else:
+            st.error(f"Erreur Claude ({r.status_code}): {r.text}")
+            return None
+    except requests.exceptions.Timeout:
+        st.error("Timeout de l'API Claude.")
+        return None
+    except Exception as e:
+        st.error(f"Exception lors de l'appel Claude : {e}")
+        return None
+
+def ai_analysis(p1, p2, surface, tournament, proba, best_value=None, ia_choice="Groq"):
+    """Appelle l'IA choisie pour analyser le match."""
     fav = p1 if proba >= 0.5 else p2
     und = p2 if proba >= 0.5 else p1
     vb  = ""
@@ -460,7 +544,15 @@ def ai_analysis(p1, p2, surface, tournament, proba, best_value=None):
         "4. Pronostic final\n\n"
         "Reponds en francais, sois concis."
     )
-    return call_groq(prompt)
+
+    if ia_choice == "Groq":
+        return call_groq(prompt)
+    elif ia_choice == "DeepSeek":
+        return call_deepseek(prompt)
+    elif ia_choice == "Claude":
+        return call_claude(prompt)
+    else:
+        return None
 
 def extract_21_features(ps, p1, p2, surface, level="A", best_of=3, h2h_ratio=0.5):
     s1, s2 = ps.get(p1, {}), ps.get(p2, {})
@@ -826,6 +918,8 @@ def show_dashboard():
     with col_r:
         tg_token, _ = get_tg_config()
         groq_key    = get_groq_key()
+        deepseek_key = get_deepseek_key()
+        claude_key   = get_claude_key()
         services = []
         if mi:
             ps = mi.get("player_stats", {})
@@ -834,6 +928,8 @@ def show_dashboard():
         else:
             services.append(("Modele ML", "Non charge", False))
         services.append(("IA Groq", "Connectee" if groq_key else "Non configuree", bool(groq_key)))
+        services.append(("IA DeepSeek", "Connectee" if deepseek_key else "Non configuree", bool(deepseek_key)))
+        services.append(("IA Claude", "Connectee" if claude_key else "Non configuree", bool(claude_key)))
         services.append(("Telegram", "Configure" if tg_token else "Non configure", bool(tg_token)))
         svc_html = ("<div style=\"background:rgba(255,255,255,0.04);"
                     "border:1px solid rgba(255,255,255,0.10);"
@@ -957,7 +1053,17 @@ def show_prediction():
 
     c1, c2, c3 = st.columns(3)
     with c1: n = st.number_input("Nombre de matchs", 1, MAX_MATCHES, 2)
-    with c2: use_ai = st.checkbox("Analyse IA", True)
+    with c2:
+        # Sélecteur d'IA
+        ia_options = ["Aucune"]
+        if get_groq_key(): ia_options.append("Groq")
+        if get_deepseek_key(): ia_options.append("DeepSeek")
+        if get_claude_key(): ia_options.append("Claude")
+        # Par défaut, choisir la première IA disponible si présente, sinon "Aucune"
+        default_ia = "Aucune"
+        if len(ia_options) > 1:
+            default_ia = ia_options[1]  # première IA disponible
+        ia_choice = st.selectbox("IA pour analyse", ia_options, index=ia_options.index(default_ia))
     with c3: send_tg = st.checkbox("Envoi Telegram auto", False)
 
     inputs = []
@@ -1098,9 +1204,9 @@ def show_prediction():
                             + "  Cote " + str(b["cote"]))
 
         ai_txt = None
-        if use_ai and get_groq_key():
-            with st.spinner("Analyse IA en cours..."):
-                ai_txt = ai_analysis(p1, p2, surf, tourn, proba, best_val)
+        if ia_choice != "Aucune":
+            with st.spinner(f"Analyse IA ({ia_choice}) en cours..."):
+                ai_txt = ai_analysis(p1, p2, surf, tourn, proba, best_val, ia_choice)
             if ai_txt:
                 with st.expander("Analyse IA", expanded=True):
                     st.markdown(
@@ -1389,6 +1495,26 @@ def show_config():
     else:
         st.warning("Aucun modele ML charge.")
         st.info("Placer tennis_ml_model_complete.pkl dans models/")
+
+    st.markdown("---")
+    # Ajout de tests pour chaque IA
+    st.subheader("Tests des IA")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Tester Groq"):
+            with st.spinner("Test Groq..."):
+                resp = call_groq("Dis 'OK' en un mot.")
+            st.write("Réponse :", resp)
+    with col2:
+        if st.button("Tester DeepSeek"):
+            with st.spinner("Test DeepSeek..."):
+                resp = call_deepseek("Dis 'OK' en un mot.")
+            st.write("Réponse :", resp)
+    with col3:
+        if st.button("Tester Claude"):
+            with st.spinner("Test Claude..."):
+                resp = call_claude("Dis 'OK' en un mot.")
+            st.write("Réponse :", resp)
 
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
