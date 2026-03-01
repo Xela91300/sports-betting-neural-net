@@ -420,7 +420,7 @@ def format_stats_msg():
         + datetime.now().strftime("%d/%m/%Y %H:%M") + " #TennisIQ"
     )
 
-# --- Fonctions pour les clés API ---
+# --- Fonctions pour les clés API (lecture depuis les secrets uniquement) ---
 def get_groq_key():
     try:
         return st.secrets["GROQ_API_KEY"]
@@ -449,7 +449,7 @@ def call_groq(prompt):
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-            json={"model": "llama3-8b-8192",
+            json={"model": "openai/gpt-oss-120b",  # Modèle spécifié
                   "messages": [{"role": "user", "content": prompt}],
                   "temperature": 0.3, "max_tokens": 500},
             timeout=30
