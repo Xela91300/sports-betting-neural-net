@@ -1,14 +1,14 @@
 {
-  "version": "20260308_095301",
-  "accuracy": 0.6522046838809299,
-  "auc": 0.7121687689118011,
-  "brier": 0.2150171947777135,
+  "version": "20260308_174715",
+  "accuracy": 0.5715962105383668,
+  "auc": 0.5977374561278299,
+  "brier": 0.28497984634069956,
   "n_matches": 349710,
-  "n_players": 15932,
-  "n_h2h_pairs": 225889,
-  "trained_at": "2026-03-08T09:53:24.681050",
-  "previous_accuracy": 0.7780797814129479,
-  "improvement": -0.12587509753201798,
+  "n_players": 14525,
+  "n_h2h_pairs": 180326,
+  "trained_at": "2026-03-08T17:47:29.011040",
+  "previous_accuracy": null,
+  "improvement": null,
   "features": [
     "log_rank_ratio",
     "pts_diff_norm",
@@ -35,24 +35,29 @@
   "top5_features": [
     [
       "career_wr_diff",
-      0.37259122675861056
+      0.3722495797859039
     ],
     [
       "surf_wr_diff",
-      0.28708289315248936
+      0.2755810600098164
     ],
     [
       "fatigue_diff",
-      0.146981236940835
+      0.14683947150958626
     ],
     [
       "pts_diff_norm",
-      0.04125745668335122
+      0.05302355418903046
     ],
     [
       "log_rank_ratio",
-      0.023305701827676606
+      0.02901902389249533
     ]
   ],
-  "h2h_fix": true
+  "fixes_applied": [
+    "no_data_leakage",
+    "correct_split",
+    "prefit_calibration",
+    "h2h_string_keys"
+  ]
 }
